@@ -40,7 +40,9 @@ function buildTicks(events: WakeEvent[]): TickRender[] {
   const out: TickRender[] = [];
   for (let i = 0; i < MAX_RENDERED_TICKS; i++) {
     const idx = Math.floor(i * step);
-    out.push({ index: idx, color: colorForEventType(events[idx].type) });
+    const ev = events[idx];
+    if (!ev) continue;
+    out.push({ index: idx, color: colorForEventType(ev.type) });
   }
   return out;
 }

@@ -5,7 +5,8 @@
 // is wired via WAKE_API_KEY env var) off the client URL and lets us
 // translate backend errors into friendly JSON.
 
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
 
 const BACKEND_BASE =
   process.env.NEXT_PUBLIC_WAKE_API_BASE ?? "http://localhost:8080";

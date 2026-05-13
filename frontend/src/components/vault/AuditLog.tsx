@@ -26,14 +26,14 @@ export interface AuditLogProps {
 
 const DECISION_VARIANT: Record<
   string,
-  "success" | "warning" | "destructive" | "secondary" | "outline"
+  "success" | "warning" | "danger" | "secondary" | "outline"
 > = {
   allow: "success",
   oauth_success: "success",
   rotate_started: "secondary",
   oauth_start: "secondary",
-  deny: "destructive",
-  oauth_failed: "destructive",
+  deny: "danger",
+  oauth_failed: "danger",
   revoked: "warning",
 };
 

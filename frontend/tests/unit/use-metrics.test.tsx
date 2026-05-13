@@ -91,6 +91,6 @@ describe("useWorkers", () => {
       useWorkers({ client, autoRefreshMs: null }),
     );
     await waitFor(() => expect(result.current.workers).toHaveLength(1));
-    expect(result.current.workers[0].worker_id).toBe("w-1");
+    expect(result.current.workers[0]?.worker_id).toBe("w-1");
   });
 });

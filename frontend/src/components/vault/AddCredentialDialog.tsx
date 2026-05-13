@@ -58,7 +58,7 @@ export function AddCredentialDialog({
 }: AddCredentialDialogProps) {
   const [provider, setProvider] = React.useState<VaultProvider>("github");
   const [scopes, setScopes] = React.useState<string>(
-    PROVIDER_OPTIONS[0].defaultScopes,
+    PROVIDER_OPTIONS[0]?.defaultScopes ?? "",
   );
   const [redirectUri, setRedirectUri] = React.useState("");
   const [submitting, setSubmitting] = React.useState(false);

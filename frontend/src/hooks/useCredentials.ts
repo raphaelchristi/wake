@@ -2,7 +2,8 @@
 
 import * as React from "react";
 
-import { WakeApiClient, WakeApiError, getClient } from "@/lib/api/client";
+import { WakeApiError, getClient } from "@/lib/api/client";
+import type { WakeApiClient } from "@/lib/api/client";
 import type {
   CredentialList,
   OAuthStartRequest,

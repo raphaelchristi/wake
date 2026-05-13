@@ -117,6 +117,7 @@ export function EventList({
         >
           {virtualizer.getVirtualItems().map((virtualRow) => {
             const event = events[virtualRow.index];
+            if (!event) return null;
             return (
               <Row
                 key={event.id}

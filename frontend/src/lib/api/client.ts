@@ -71,6 +71,19 @@ export class WakeApiClient {
     return h;
   }
 
+  /**
+   * Public escape hatch for hooks that need raw HTTP control
+   * (used by replay + metrics-vault hooks). Same semantics as the
+   * typed convenience methods below.
+   */
+  async raw<T>(
+    method: string,
+    path: string,
+    options: { query?: Record<string, unknown>; body?: unknown } = {},
+  ): Promise<T> {
+    return this.request<T>(method, path, options);
+  }
+
   private async request<T>(
     method: string,
     path: string,
@@ -140,6 +153,20 @@ export class WakeApiClient {
       { query: { since } },
     );
   }
+
+  // -- generic verb helpers (used by replay + metrics-vault hooks) -----------
+
+  get<T>(path: string, query?: Record<string, unknown>): Promise<T> {
+    return this.request<T>("GET", path, { query });
+  }
+
+  post<T>(path: string, body?: unknown): Promise<T> {
+    return this.request<T>("POST", path, { body });
+  }
+
+  delete<T = void>(path: string): Promise<T> {
+    return this.request<T>("DELETE", path);
+  }
 }
 
 /** Lazily-instantiated default client. */
@@ -147,6 +174,35 @@ let defaultClient: WakeApiClient | null = null;
 export function getDefaultClient(): WakeApiClient {
   if (!defaultClient) defaultClient = new WakeApiClient();
   return defaultClient;
+}
+
+/** Alias kept for compatibility with hooks introduced by replay + metrics-vault slices. */
+export const getClient = getDefaultClient;
+
+/**
+ * Standalone request helper used by hooks that don't need a `WakeApiClient` instance.
+ * Wraps the default client with a method+path+query+body shape.
+ */
+/**
+ * Standalone fetch helper used by replay hooks. Signature:
+ *   request(path)             → GET path
+ *   request(path, options)    → GET path with query/body
+ *   request(method, path, ?)  → arbitrary method
+ *
+ * Returns the parsed JSON body, typed as `T`.
+ */
+export async function request<T>(
+  pathOrMethod: string,
+  pathOrOptions?: string | { query?: Record<string, unknown>; body?: unknown },
+  options: { query?: Record<string, unknown>; body?: unknown } = {},
+): Promise<T> {
+  const client = getDefaultClient();
+  // request("GET", "/path", { query: {...} })
+  if (typeof pathOrOptions === "string") {
+    return client.raw<T>(pathOrMethod, pathOrOptions, options);
+  }
+  // request("/path") or request("/path", { query }) → defaults to GET
+  return client.raw<T>("GET", pathOrMethod, pathOrOptions ?? {});
 }
 
 /** Test-only — reset the default client between cases. */

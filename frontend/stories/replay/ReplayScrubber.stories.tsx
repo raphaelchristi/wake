@@ -3,7 +3,7 @@ import { ReplayScrubber } from "@/components/replay/ReplayScrubber";
 import fixture from "../../tests/fixtures/events-fixture.json";
 import type { WakeEvent } from "@/lib/replay/types";
 
-const events = (fixture as { data: WakeEvent[] }).data;
+const events = (fixture as unknown as { data: WakeEvent[] }).data;
 
 const meta: Meta<typeof ReplayScrubber> = {
   title: "Replay/ReplayScrubber",
@@ -40,7 +40,7 @@ export const Single: Story = {
 export const HundredEvents: Story = {
   args: {
     events: Array.from({ length: 100 }, (_, i) => ({
-      ...events[i % events.length],
+      ...(events[i % events.length] as WakeEvent),
       id: `gen_${i}`,
       seq: i,
     })),
@@ -52,7 +52,7 @@ export const ThousandEvents: Story = {
   // Performance probe — should still be smooth.
   args: {
     events: Array.from({ length: 1000 }, (_, i) => ({
-      ...events[i % events.length],
+      ...(events[i % events.length] as WakeEvent),
       id: `gen_${i}`,
       seq: i,
     })),

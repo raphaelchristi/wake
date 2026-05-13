@@ -2,7 +2,8 @@
 
 import * as React from "react";
 
-import { WakeApiClient, getClient } from "@/lib/api/client";
+import { getClient } from "@/lib/api/client";
+import type { WakeApiClient } from "@/lib/api/client";
 import type { Worker, WorkerList } from "@/lib/api/metrics-types";
 
 export interface UseWorkersOptions {
