@@ -59,6 +59,7 @@ adapter-claude-sdk = [
 ]
 all-adapters = [
     "wake-adapter-claude-sdk",
+    "wake-sandbox-runtime",
 ]
 
 [project.scripts]
