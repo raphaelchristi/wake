@@ -1,0 +1,35 @@
+# Wake agent + environment manifest for the coding-refactor example.
+#
+# Apply with:
+#   wake agent create -f wake.yaml   # (planned UX — Phase 1 uses --name/--model)
+#
+# For Phase 1, run.sh demonstrates an equivalent flow via individual CLI
+# flags, while this file documents the target declarative form.
+
+agent:
+  name: refactor-bot
+  model: claude-opus-4-7
+  system: |
+    You refactor Python code. Use the available tools (bash, file_read,
+    file_write, file_edit) to read existing files, edit them in place,
+    and verify your changes by running tests. Be concise in commentary.
+  tools:
+    - type: bash
+    - type: file_read
+    - type: file_write
+    - type: file_edit
+
+environment:
+  name: python-dev
+  config:
+    type: python
+    packages:
+      - pytest
+    sandbox:
+      backend: docker
+      network:
+        mode: limited
+        allowed_hosts: []
+      filesystem:
+        allow_write: [./workspace]
+        deny_read: [~/.ssh, ~/.aws, .env]
