@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/banner.png" alt="Wake — Durable runtime substrate for AI agents" width="900">
+</p>
+
 # Wake
 
 > Durable runtime substrate for AI agents. Bring your framework. Bring your model. Bring your tools. Wake handles the event log, sandbox, vault and lifecycle.
