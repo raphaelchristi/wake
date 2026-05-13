@@ -9,7 +9,6 @@ import pytest
 from wake.api import oauth_state
 from wake.api.oauth_state import OAuthStateError, sign_state, verify_state
 
-
 SECRET = "test-secret-do-not-use-in-prod"
 
 
