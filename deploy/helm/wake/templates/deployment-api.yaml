@@ -50,6 +50,22 @@ spec:
               value: {{ include "wake.vaultUrl" . | quote }}
             - name: WAKE_AGENTGATEWAY_URL
               value: {{ include "wake.agentgatewayUrl" . | quote }}
+            # Fail-closed auth (Phase 5.1 finding #3). When true the API
+            # refuses to serve authenticated routes unless WAKE_API_KEY
+            # is also injected — surfacing missing-Secret as 503 instead
+            # of silently passing every request.
+            - name: WAKE_AUTH_REQUIRED
+              value: {{ .Values.auth.required | quote }}
+            - name: WAKE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  {{- if .Values.auth.apiKeySecretRef.name }}
+                  name: {{ .Values.auth.apiKeySecretRef.name | quote }}
+                  key: {{ .Values.auth.apiKeySecretRef.key | quote }}
+                  {{- else }}
+                  name: {{ include "wake.fullname" . }}-secret
+                  key: wake-api-key
+                  {{- end }}
             - name: ANTHROPIC_API_KEY
               valueFrom:
                 secretKeyRef:

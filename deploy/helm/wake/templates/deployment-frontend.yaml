@@ -44,21 +44,31 @@ spec:
               value: "3000"
             - name: HOSTNAME
               value: "0.0.0.0"
-            # Browser-facing API URL. Override per-deployment via the
-            # frontend.publicApiUrl value (defaults to the ingress host).
-            - name: NEXT_PUBLIC_API_URL
+            # Browser-facing API URL. Public, baked into the client
+            # bundle by Next.js at build time. Override per-deployment
+            # via the frontend.publicApiUrl value (defaults to the
+            # ingress host).
+            - name: NEXT_PUBLIC_WAKE_API_BASE
               value: {{ .Values.frontend.publicApiUrl | quote }}
-            # Server-side API URL (Next.js Route Handlers).
+            # Server-side API URL (Next.js Route Handlers — e.g. the
+            # OAuth callback proxy). Private; never exposed to the
+            # browser. Points at the in-cluster Service so the proxy
+            # bypasses the public ingress.
             - name: WAKE_API_URL
               value: "http://{{ include "wake.fullname" . }}-api:{{ .Values.api.service.port }}"
-            {{- if .Values.frontend.apiKeySecretRef }}
+            # Shared API key — used server-side by the OAuth callback
+            # relay so the browser never sees it. Sourced from the
+            # same chart-wide auth.* values as the backend.
             - name: WAKE_API_KEY
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.frontend.apiKeySecretRef.name | quote }}
-                  key: {{ .Values.frontend.apiKeySecretRef.key | quote }}
-                  optional: true
-            {{- end }}
+                  {{- if .Values.auth.apiKeySecretRef.name }}
+                  name: {{ .Values.auth.apiKeySecretRef.name | quote }}
+                  key: {{ .Values.auth.apiKeySecretRef.key | quote }}
+                  {{- else }}
+                  name: {{ include "wake.fullname" . }}-secret
+                  key: wake-api-key
+                  {{- end }}
           readinessProbe:
             httpGet:
               path: /

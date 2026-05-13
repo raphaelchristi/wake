@@ -16,6 +16,32 @@ imagePullSecrets: []
 # Per-component overrides land under api / worker below if you split images.
 
 # ---------------------------------------------------------------------------
+# Authentication — shared API key for dashboard ↔ backend.
+# Phase 5.1: fail-closed by default. The chart REQUIRES either
+# ``auth.apiKey`` (plaintext, rendered into the chart-managed Secret) or
+# ``auth.apiKeySecretRef`` (BYO existing Secret) when ``auth.required``
+# is true. Leaving both empty causes the API to 503 every request — by
+# design — surfacing the misconfiguration as a deployment failure
+# rather than a silent fail-open.
+# ---------------------------------------------------------------------------
+
+auth:
+  # Fail-closed: when true, the API rejects every authenticated route
+  # with 503 unless an API key is also wired. Production deployments
+  # should keep this true. Set to false ONLY for fully untrusted-but-
+  # internal dev clusters where you understand the risk.
+  required: true
+  # Plaintext API key. Pick at least 32 random bytes:
+  #   openssl rand -hex 32
+  # If you do not want a plaintext value in values.yaml, leave this
+  # empty and set ``apiKeySecretRef`` to point at an existing Secret.
+  apiKey: ""
+  # Existing Secret reference (preferred for production).
+  apiKeySecretRef:
+    name: ""
+    key: ""
+
+# ---------------------------------------------------------------------------
 # API tier — handles HTTP + SSE.
 # ---------------------------------------------------------------------------
 
@@ -53,12 +79,9 @@ frontend:
   # URL the BROWSER calls to reach the wake-api. In most deployments
   # this is the public ingress host (HTTPS terminated by the ingress
   # controller); the in-cluster service URL is used only by server-side
-  # Next.js route handlers.
+  # Next.js route handlers. Injected into the Next.js process as
+  # ``NEXT_PUBLIC_WAKE_API_BASE`` and baked into the client bundle.
   publicApiUrl: "https://wake.example.com"
-  # Optional: load WAKE_API_KEY from an existing Secret.
-  apiKeySecretRef: {}
-    # name: wake-frontend-secret
-    # key: api-key
   resources:
     requests:
       cpu: 100m
