@@ -15,7 +15,7 @@ Plano de execução do Wake. Cada fase tem **gates de saída objetivos** — voc
 | [Phase 2](./PHASE-2-first-adapter.md) | First Adapter | 2 semanas | ✅ done |
 | [Phase 3](./PHASE-3-spec-validation.md) | Spec Validation | 3 semanas | ✅ done |
 | [Phase 4](./PHASE-4-production-stack.md) | Production Stack | 3 semanas | ✅ done |
-| [Phase 5](./PHASE-5-operator-ui.md) | Operator UI (Wake Dashboard) | 3-5 semanas | 🟡 in_progress |
+| [Phase 5](./PHASE-5-operator-ui.md) | Operator UI (Wake Dashboard) | 3-5 semanas | ✅ done |
 | [Phase 6](./PHASE-6-public-launch.md) | Public Launch | 1 semana | ⚪ not_started |
 
 **Total estimado:** 12-13 semanas (≈3 meses) para Wake v0.1.0 público com 4 adapters funcionando.
@@ -103,6 +103,31 @@ Frameworks instalados em `.venv` (gitignored, devs instalam local):
 - `langgraph>=1.0,<2.0`
 - `crewai>=1.0` (instalou 1.14.4)
 - `pydantic-ai>=1.0`
+
+### Phase 5 — done via multi-agent + continuation passes
+
+3 Opus agents em worktrees isolados (`agent/dashboard-shell`, `agent/dashboard-replay`, `agent/dashboard-metrics-vault`) construíram o **Wake Dashboard** (Next.js 15 SPA) em paralelo. Primeira passagem entregou ~70% commitado; uma rodada de continuação fechou os gaps (frontend não commitado pelos agents originais que excederam o budget de tempo).
+
+- **`agent/dashboard-shell`** (`26e8d30`) — scaffolding Next.js 15 + App Router + RSC + Tailwind v4 + shadcn/ui + TanStack Query + TanStack Table + auth `X-Wake-API-Key` + sessions list+filters + layout shell + dark mode + GitHub Actions CI. Backend additive: CORS middleware, filter query params em `GET /sessions`.
+- **`agent/dashboard-replay`** (`a8c991a`) — replay scrubber + event list virtualizada + event detail (react-json-view-lite) + sandbox state panel + playback controls + keyboard shortcuts + 53-event fixture + storybook. Backend additive: `GET /sessions/{id}/state-at/{seq}` com event-by-event reconstruction.
+- **`agent/dashboard-metrics-vault`** (`9bdaf9d`) — métricas (Recharts: latency p50/95/99, cost, throughput, error rate, workers, time range picker) + vault management UI (credentials list sem tokens, Add/Rotate dialogs, OAuth callback, audit log) + deploy (Dockerfile.frontend multi-stage, Helm `deployment-frontend.yaml` + `service-frontend.yaml` + ingress, Compose service) + `docs/DASHBOARD.md` (823 linhas). Backend additive: `GET /metrics/summary`, `GET /workers`, vault routes (list/oauth/start/oauth/callback/rotate/revoke/audit).
+
+Stats agregadas Phase 5:
+- ~14.000 LoC source+tests (frontend 11 rotas + 4 surfaces + tests + stories + deploy)
+- **+143 tests novos** (79 vitest frontend + 64 pytest backend — api filters 11, state reconstruction 19, metrics aggregation 19, vault routes 15)
+- Bundle gzip: max `/metrics` 229KB First Load (dentro do budget 300KB)
+- Build clean: `next build` 11 rotas prerendered + 1 dynamic
+- Regressions claude-sdk/conformance/langgraph/postgres/sandbox/vault/litellm todas verdes
+- Post-merge fixes (`4556b6c`): typecheck (noUncheckedIndexedAccess), lint (type-only imports), happy-dom localStorage polyfill
+- Worktrees + branches cleaned up
+
+Decisões locked durante a phase:
+- Stack: Next.js 15 App Router + RSC + Tailwind v4 + shadcn/ui + pnpm
+- Auth: `X-Wake-API-Key` bearer header (OAuth Infisical fica pra v1.1)
+- Real-time: SSE (já existente) + polling fallback
+- Hosting: Next.js standalone build → Docker → Helm + Compose (self-host first)
+
+---
 
 ### Phase 4 — done in ~37 min wall-clock (multi-agent)
 
