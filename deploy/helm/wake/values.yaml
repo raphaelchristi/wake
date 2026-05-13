@@ -39,6 +39,42 @@ api:
   affinity: {}
 
 # ---------------------------------------------------------------------------
+# Frontend tier — Wake Dashboard (Next.js 15 standalone).
+# Phase 5. Set ``frontend.enabled: false`` if you only want the API.
+# ---------------------------------------------------------------------------
+
+frontend:
+  enabled: true
+  replicas: 2
+  image:
+    repository: wake-ai/dashboard
+    tag: "0.5.0"
+    pullPolicy: IfNotPresent
+  # URL the BROWSER calls to reach the wake-api. In most deployments
+  # this is the public ingress host (HTTPS terminated by the ingress
+  # controller); the in-cluster service URL is used only by server-side
+  # Next.js route handlers.
+  publicApiUrl: "https://wake.example.com"
+  # Optional: load WAKE_API_KEY from an existing Secret.
+  apiKeySecretRef: {}
+    # name: wake-frontend-secret
+    # key: api-key
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  service:
+    type: ClusterIP
+    port: 3000
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# ---------------------------------------------------------------------------
 # Worker tier — runs harness sessions; multiple replicas pick from
 # Postgres via advisory locks.
 # ---------------------------------------------------------------------------

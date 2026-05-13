@@ -1,0 +1,88 @@
+{{- if .Values.frontend.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "wake.fullname" . }}-frontend
+  labels:
+    {{- include "wake.labels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+spec:
+  replicas: {{ .Values.frontend.replicas }}
+  selector:
+    matchLabels:
+      {{- include "wake.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: frontend
+  template:
+    metadata:
+      labels:
+        {{- include "wake.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: frontend
+      {{- with .Values.frontend.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "wake.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: frontend
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          image: "{{ (default .Values.frontend.image.repository (index .Values.frontend.image "repository")) }}:{{ (default .Values.frontend.image.tag (index .Values.frontend.image "tag")) }}"
+          imagePullPolicy: {{ default .Values.image.pullPolicy .Values.frontend.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: NEXT_TELEMETRY_DISABLED
+              value: "1"
+            - name: PORT
+              value: "3000"
+            - name: HOSTNAME
+              value: "0.0.0.0"
+            # Browser-facing API URL. Override per-deployment via the
+            # frontend.publicApiUrl value (defaults to the ingress host).
+            - name: NEXT_PUBLIC_API_URL
+              value: {{ .Values.frontend.publicApiUrl | quote }}
+            # Server-side API URL (Next.js Route Handlers).
+            - name: WAKE_API_URL
+              value: "http://{{ include "wake.fullname" . }}-api:{{ .Values.api.service.port }}"
+            {{- if .Values.frontend.apiKeySecretRef }}
+            - name: WAKE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.frontend.apiKeySecretRef.name | quote }}
+                  key: {{ .Values.frontend.apiKeySecretRef.key | quote }}
+                  optional: true
+            {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 15
+          resources:
+            {{- toYaml .Values.frontend.resources | nindent 12 }}
+      {{- with .Values.frontend.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.frontend.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.frontend.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}
