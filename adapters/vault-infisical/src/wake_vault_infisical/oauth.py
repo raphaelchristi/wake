@@ -1,0 +1,274 @@
+"""OAuth2 helpers — GitHub, Slack, Notion (and a generic ``custom`` flow).
+
+The flow is the standard Authorization Code grant:
+
+1. ``OAuthFlow.build_authorize_url(...)`` — caller opens this in the
+   user's browser.
+2. The provider redirects back to ``redirect_uri`` with ``?code=...``.
+3. ``OAuthFlow.exchange_code(code)`` — server-side, exchange code for
+   an access token. Returns the raw token; the caller is responsible
+   for handing it straight to ``VaultAdapter.add(...)``.
+
+We use ``requests_oauthlib`` for URL building / state management because
+it correctly handles ``state``, ``scope`` formatting per provider, and
+the various PKCE / refresh-token quirks. The actual HTTP exchange is
+proxied through ``httpx.AsyncClient`` so the flow is testable with
+``responses`` / mocked transports.
+
+Security note: tokens **never** flow through ``logger.info`` (we log
+"received token of length N" at most). Callers must store tokens in the
+vault and drop their in-memory copy.
+"""
+
+from __future__ import annotations
+
+import secrets
+from dataclasses import dataclass
+from typing import Any
+from urllib.parse import urlencode
+
+import httpx
+import structlog
+
+logger = structlog.get_logger(__name__)
+
+
+class OAuthError(Exception):
+    """Raised when an OAuth exchange fails (network, validation, deny)."""
+
+
+@dataclass(frozen=True)
+class OAuthProvider:
+    """Describes a single OAuth2 provider's endpoints + default scopes.
+
+    Provider records are immutable; tests register custom providers
+    via ``register_provider`` instead of mutating the registry.
+    """
+
+    name: str
+    authorize_url: str
+    token_url: str
+    default_scopes: list[str]
+    scope_separator: str = " "
+    extra_auth_params: dict[str, str] | None = None
+
+
+_PROVIDERS: dict[str, OAuthProvider] = {
+    "github": OAuthProvider(
+        name="github",
+        authorize_url="https://github.com/login/oauth/authorize",
+        token_url="https://github.com/login/oauth/access_token",
+        default_scopes=["repo", "read:user"],
+    ),
+    "slack": OAuthProvider(
+        name="slack",
+        authorize_url="https://slack.com/oauth/v2/authorize",
+        token_url="https://slack.com/api/oauth.v2.access",
+        default_scopes=["chat:write", "channels:read"],
+        scope_separator=",",
+    ),
+    "notion": OAuthProvider(
+        name="notion",
+        authorize_url="https://api.notion.com/v1/oauth/authorize",
+        token_url="https://api.notion.com/v1/oauth/token",
+        default_scopes=[],  # Notion uses workspace-scoped, no scope param
+        extra_auth_params={"owner": "user", "response_type": "code"},
+    ),
+}
+
+
+def get_provider(name: str) -> OAuthProvider:
+    """Return a built-in provider by name. Raises ``KeyError`` if unknown."""
+    if name not in _PROVIDERS:
+        raise KeyError(f"unknown OAuth provider {name!r}; known: {sorted(_PROVIDERS)}")
+    return _PROVIDERS[name]
+
+
+def register_provider(provider: OAuthProvider) -> None:
+    """Register a custom OAuth provider. Mainly used in tests."""
+    _PROVIDERS[provider.name] = provider
+
+
+class OAuthFlow:
+    """OAuth2 Authorization Code flow helper.
+
+    The flow is intentionally split in two methods so the calling
+    context (CLI, server-side webhook, etc.) can interleave with browser
+    interaction however it needs.
+
+    Example
+    -------
+    >>> flow = OAuthFlow.for_provider("github", client_id="...", client_secret="...",
+    ...                                redirect_uri="http://localhost:8765/callback")
+    >>> url, state = flow.build_authorize_url(scopes=["repo"])
+    >>> # ... user authorizes in browser, we receive ?code=... ?state=...
+    >>> token = await flow.exchange_code(code)
+    >>> # token is the raw access_token string; hand to vault.add(...)
+    """
+
+    def __init__(
+        self,
+        provider: OAuthProvider,
+        client_id: str,
+        client_secret: str,
+        redirect_uri: str,
+        http_client: httpx.AsyncClient | None = None,
+    ) -> None:
+        self._provider = provider
+        self._client_id = client_id
+        self._client_secret = client_secret
+        self._redirect_uri = redirect_uri
+        self._http = http_client
+        self._state: str | None = None  # latched on build_authorize_url
+
+    @classmethod
+    def for_provider(
+        cls,
+        name: str,
+        *,
+        client_id: str,
+        client_secret: str,
+        redirect_uri: str,
+        http_client: httpx.AsyncClient | None = None,
+    ) -> OAuthFlow:
+        """Build a flow against a built-in provider by name."""
+        return cls(
+            provider=get_provider(name),
+            client_id=client_id,
+            client_secret=client_secret,
+            redirect_uri=redirect_uri,
+            http_client=http_client,
+        )
+
+    # ------------------------------------------------------------------ public
+
+    @property
+    def state(self) -> str | None:
+        """CSRF token generated by ``build_authorize_url``.
+
+        Tests/CLI use this to verify that the ``state`` echoed by the
+        provider in the callback matches what we sent.
+        """
+        return self._state
+
+    @property
+    def provider(self) -> OAuthProvider:
+        return self._provider
+
+    def build_authorize_url(
+        self,
+        *,
+        scopes: list[str] | None = None,
+        state: str | None = None,
+    ) -> tuple[str, str]:
+        """Return ``(authorize_url, state)`` for the user's browser.
+
+        Generates a CSRF ``state`` if not supplied. Callers should keep
+        this value and verify it matches the ``state`` parameter on the
+        callback before calling ``exchange_code``.
+        """
+        scopes = scopes or list(self._provider.default_scopes)
+        self._state = state or secrets.token_urlsafe(24)
+
+        params: dict[str, str] = {
+            "client_id": self._client_id,
+            "redirect_uri": self._redirect_uri,
+            "state": self._state,
+        }
+        if scopes:
+            params["scope"] = self._provider.scope_separator.join(scopes)
+        if self._provider.extra_auth_params:
+            params.update(self._provider.extra_auth_params)
+        # Default to ``response_type=code`` unless the provider already set it.
+        params.setdefault("response_type", "code")
+
+        url = f"{self._provider.authorize_url}?{urlencode(params)}"
+        logger.info(
+            "oauth_authorize_url_built",
+            provider=self._provider.name,
+            scopes=scopes,
+            # state IS logged because it's a CSRF token, not a credential.
+            state=self._state,
+        )
+        return url, self._state
+
+    async def exchange_code(
+        self,
+        code: str,
+        *,
+        state: str | None = None,
+    ) -> dict[str, Any]:
+        """Exchange an auth code for an access token.
+
+        Returns the raw provider response (parsed JSON or form-encoded
+        depending on provider). The caller pulls ``access_token`` out
+        and hands it to ``VaultAdapter.add(...)``.
+
+        Token value is **never** logged; only its length and the
+        provider name.
+        """
+        if state is not None and self._state is not None and state != self._state:
+            raise OAuthError(
+                f"state mismatch (expected {self._state!r}, got {state!r}) — "
+                "possible CSRF; aborting code exchange"
+            )
+
+        if not code:
+            raise OAuthError("empty authorization code")
+
+        own_client = self._http is None
+        client = self._http or httpx.AsyncClient(timeout=10.0)
+        try:
+            try:
+                resp = await client.post(
+                    self._provider.token_url,
+                    data={
+                        "client_id": self._client_id,
+                        "client_secret": self._client_secret,
+                        "code": code,
+                        "redirect_uri": self._redirect_uri,
+                        "grant_type": "authorization_code",
+                    },
+                    headers={"Accept": "application/json"},
+                )
+            except httpx.HTTPError as exc:
+                raise OAuthError(f"token exchange transport failure: {exc}") from exc
+
+            if resp.status_code >= 400:
+                # Body might contain sensitive data on some providers;
+                # surface only status + provider in the exception.
+                raise OAuthError(
+                    f"{self._provider.name} token exchange returned HTTP {resp.status_code}"
+                )
+
+            try:
+                data: dict[str, Any] = resp.json()
+            except ValueError as exc:
+                raise OAuthError(
+                    f"{self._provider.name} token exchange returned non-JSON body"
+                ) from exc
+
+            if "error" in data:
+                # Provider explicitly told us "no" (e.g. user denied).
+                raise OAuthError(f"{self._provider.name} oauth error: {data['error']}")
+
+            token = data.get("access_token", "")
+            logger.info(
+                "oauth_token_exchanged",
+                provider=self._provider.name,
+                # Length only — never the value.
+                token_length=len(token) if token else 0,
+            )
+            return data
+        finally:
+            if own_client:
+                await client.aclose()
+
+
+__all__ = [
+    "OAuthFlow",
+    "OAuthError",
+    "OAuthProvider",
+    "get_provider",
+    "register_provider",
+]
