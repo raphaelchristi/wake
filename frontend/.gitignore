@@ -1,0 +1,37 @@
+# STUB — owned by dashboard-shell.
+# Minimal ignores to keep replay slice commits clean. Shell slice ships the
+# canonical version (next.js + storybook + vercel + sentry + IDE).
+# TODO(dashboard-shell merge): replace with shell's .gitignore.
+
+# deps
+node_modules/
+.pnpm-store/
+
+# next.js
+.next/
+out/
+next-env.d.ts
+
+# tests
+coverage/
+playwright-report/
+test-results/
+.playwright/
+
+# storybook
+storybook-static/
+
+# logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# env
+.env*.local
+.env
+
+# misc
+*.tsbuildinfo
+.DS_Store
