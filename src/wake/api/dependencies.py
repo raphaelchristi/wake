@@ -51,8 +51,10 @@ class AppState:
     # In-memory audit log (single-process). Postgres-backed stores
     # supersede this in production.
     vault_audit: list[dict[str, object]] = field(default_factory=list)
-    # OAuth ``state`` → ``flow`` map for callback verification. Cleared
-    # when the matching callback completes (or on TTL).
+    # DEPRECATED (Phase 5.1 finding #4 fix): OAuth ``state`` is now a
+    # signed HMAC-SHA256 token (see ``wake.api.oauth_state``) so callbacks
+    # work across replicas. This dict is no longer written to; kept for
+    # one release to keep existing imports stable. TODO(0.6.x): remove.
     oauth_flows: dict[str, object] = field(default_factory=dict)
 
 

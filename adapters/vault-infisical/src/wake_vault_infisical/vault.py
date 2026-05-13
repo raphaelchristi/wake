@@ -12,6 +12,7 @@ secret is in the vault, the adapter holds only metadata.
 
 from __future__ import annotations
 
+import builtins
 import os
 from datetime import UTC, datetime
 from typing import Any
@@ -321,6 +322,92 @@ class InfisicalVault(VaultAdapter):
                 resp.raise_for_status()
         except httpx.HTTPError as exc:
             raise VaultError(f"infisical revoke failed: {exc}") from exc
+
+    async def replace(
+        self,
+        vault_id: str,
+        value: str,
+        *,
+        name: str | None = None,
+        provider: ProviderName | str | None = None,
+        scopes: builtins.list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> CredentialMetadata:
+        """Replace ``vault_id``'s secret with ``value`` (rotate).
+
+        Semantics:
+
+        * The returned ``CredentialMetadata`` represents the **new** credential.
+        * The old ``vault_id`` is revoked (best-effort, idempotent) so any
+          previously issued proxy tokens stop resolving.
+        * If the old entry's name/provider/scopes are omitted, they are
+          carried over from the existing metadata.
+
+        Infisical's REST API does not expose an atomic "rotate by vault_id"
+        primitive, so the implementation is *add-new → revoke-old*. The
+        window of inconsistency (both credentials live) is short — bounded
+        by the second HTTP round-trip — and is acceptable because the new
+        credential is what gets handed back to the caller for immediate use.
+
+        Idempotency: if the old ``vault_id`` no longer exists, ``replace``
+        still adds the new credential and returns its metadata. The caller
+        can interpret this as a recovery from a half-completed rotate.
+        """
+        # Carry over fields from the existing record when caller omits them.
+        # We tolerate "not found" here so a rotate after a partial failure
+        # still completes; the new credential is what matters.
+        old_meta: CredentialMetadata | None = None
+        try:
+            old_meta = await self.get_metadata(vault_id)
+        except VaultNotFoundError:
+            logger.warning(
+                "vault_replace_old_missing",
+                vault_id=vault_id,
+                note="proceeding with rotate; old entry not found",
+            )
+
+        effective_name = name or (old_meta.name if old_meta else f"credential_{uuid4().hex[:8]}")
+        effective_provider: ProviderName | str = (
+            provider
+            if provider is not None
+            else (old_meta.provider if old_meta else "custom")
+        )
+        effective_scopes = (
+            scopes if scopes is not None else (list(old_meta.scopes) if old_meta else [])
+        )
+        # Merge metadata: old.metadata + caller overrides. Caller wins.
+        effective_metadata: dict[str, Any] = dict(old_meta.metadata) if old_meta else {}
+        if metadata:
+            effective_metadata.update(metadata)
+        effective_metadata.setdefault("rotated_from", vault_id)
+
+        logger.info(
+            "vault_replace",
+            old_vault_id=vault_id,
+            name=effective_name,
+            provider=str(effective_provider),
+        )
+
+        new_meta = await self.add(
+            name=effective_name,
+            provider=effective_provider,
+            value=value,
+            scopes=effective_scopes,
+            metadata=effective_metadata,
+        )
+
+        # Revoke the old entry. Best-effort: if it's already gone, fine.
+        try:
+            await self.revoke(vault_id)
+        except VaultError as exc:
+            logger.warning(
+                "vault_replace_revoke_failed",
+                old_vault_id=vault_id,
+                new_vault_id=new_meta.vault_id,
+                error=str(exc),
+            )
+
+        return new_meta
 
     # ------------------------------------------------------------------ helpers
 
