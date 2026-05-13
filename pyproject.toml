@@ -60,9 +60,13 @@ adapter-claude-sdk = [
 all-adapters = [
     "wake-adapter-claude-sdk",
     "wake-store-postgres",
+    "wake-sandbox-runtime",
 ]
 store-postgres = [
     "wake-store-postgres",
+]
+sandbox-runtime = [
+    "wake-sandbox-runtime",
 ]
 
 [project.scripts]
