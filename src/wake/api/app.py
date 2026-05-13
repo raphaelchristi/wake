@@ -192,6 +192,10 @@ def create_app(
     return app
 
 
-# Module-level app for ``uvicorn wake.api.app:app``. Components are wired
-# by the CLI / launcher before requests hit the API.
+# Module-level app — **dev shortcut only**. This instance has no stores,
+# no dispatcher, no sandbox: every business route will return 501 until
+# the components are attached. Production deployments must use
+# ``wake.api.bootstrap:create_production_app`` (mounted by ``wake server``
+# via ``uvicorn --factory``). Tests should build their own ``create_app``
+# call with in-memory fakes (see ``tests/conftest.py``).
 app = create_app()

@@ -49,6 +49,36 @@ or Helm values:
 | Log level | `WAKE_LOG_LEVEL` | (env override) |
 | OTLP endpoint | `OTEL_EXPORTER_OTLP_ENDPOINT` | `observability.otel.endpoint` |
 
+### Bootstrap env vars (Phase 5.1)
+
+`wake server` and `wake worker` share a single production factory
+(`wake.api.bootstrap.create_production_app` / `build_components`). It
+reads the following env vars at startup:
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `WAKE_DATABASE_URL` | `sqlite+aiosqlite:///./wake.db` | SQLAlchemy DSN. A `postgres*` prefix triggers the optional `wake-store-postgres` adapter — install via `pip install wake-store-postgres`. |
+| `WAKE_SANDBOX_BACKEND` | `docker` | One of `docker`, `sandbox-runtime`, or `none`. `none` disables tool execution (catalog / replay only). |
+| `WAKE_VAULT_PROVIDER` | `none` | `infisical` wires the Infisical adapter when installed; anything else falls back to the entry-point registry. |
+| `WAKE_API_KEY` | _(unset)_ | Forwarded to the auth dependency. Required in production deployments. |
+| `WAKE_API_CORS_ORIGINS` | dashboard dev origin | Comma-separated allowlist. |
+| `WAKE_WORKER_POLL_INTERVAL_S` | `1.0` | Seconds the worker waits between store polls when idle. |
+| `WAKE_PG_HEARTBEAT_INTERVAL_S` | `10` | Heartbeat cadence for Postgres-backed workers. |
+
+### Running the components
+
+```bash
+# Server (uvicorn via --factory)
+wake server                       # 0.0.0.0:8080, reads env vars above
+
+# Worker — same env surface, plus advisory locks against Postgres
+wake worker --concurrency 4       # 4 in-flight sessions per replica
+```
+
+`wake worker` exits gracefully on `SIGTERM` / `SIGINT`: the loop stops
+scheduling new sessions and waits for in-flight steps to drain (bounded
+to 30 s).
+
 ## Networking model
 
 ```
