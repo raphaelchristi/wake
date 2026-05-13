@@ -1,0 +1,89 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "wake-store-postgres"
+version = "0.1.0"
+description = "Wake storage backend backed by PostgreSQL 16+ (asyncpg + SQLAlchemy 2 + Alembic)."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+authors = [
+    { name = "Wake contributors" },
+]
+keywords = ["wake", "wake-store", "postgres", "postgresql", "asyncpg", "ai-agents"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Database",
+]
+dependencies = [
+    "wake-ai>=0.0.1",
+    "asyncpg>=0.29",
+    "sqlalchemy[asyncio]>=2.0",
+    "alembic>=1.13",
+    "pydantic>=2.9",
+    "structlog>=24.4",
+    "python-ulid>=3.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "testcontainers[postgres]>=4.0",
+]
+
+# Entry-point discovery: matches the `wake.adapters` pattern used by
+# `AdapterRegistry`. The runtime's store registry (see
+# ``wake.runtime.registry``) iterates this group at startup.
+[project.entry-points."wake.stores"]
+postgres = "wake_store_postgres.store:create_from_dsn"
+
+[project.urls]
+Homepage = "https://github.com/raphaelchristi/wake"
+Repository = "https://github.com/raphaelchristi/wake"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/wake_store_postgres"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-v --strict-markers"
+markers = [
+    "load: long-running load tests (opt-in via --run-load)",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP", "B", "A", "C4", "SIM", "TCH"]
+# TC002/TC003: SQLAlchemy generic subscripts (AsyncSession,
+# async_sessionmaker[...]) and ``builtins.list`` need runtime imports
+# even under ``from __future__ import annotations`` for runtime
+# reflection used by SQLAlchemy 2 typing machinery — matches the
+# in-tree SQLite store style.
+ignore = ["E501", "TC001", "TC002", "TC003"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_ignores = true
+disallow_untyped_defs = true
+
+# wake-ai 0.0.1 doesn't ship a py.typed marker yet — treat its public
+# modules as typed by following imports rather than skipping. The
+# upstream types are pydantic models, fully introspectable.
+[[tool.mypy.overrides]]
+module = ["wake.*"]
+follow_untyped_imports = true
