@@ -36,7 +36,7 @@ class ToolRegistry(ABC):
     async def execute(
         self,
         name: str,
-        input: dict[str, Any],
+        input: dict[str, Any],  # noqa: A002 — matches docs/SPEC-HARNESS-ADAPTER.md
         *,
         tool_use_id: str,
     ) -> ToolResult:

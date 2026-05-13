@@ -7,10 +7,11 @@ narrative spec; this file is the executable contract.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
     from wake.adapters.context import SessionContext
     from wake.adapters.events import EventStream
     from wake.adapters.tool_registry import ToolRegistry

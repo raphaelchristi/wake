@@ -27,7 +27,10 @@ class EventStream(ABC):
         ...
 
     @abstractmethod
-    async def latest(self, type: EventType | None = None) -> Event | None:
+    async def latest(
+        self,
+        type: EventType | None = None,  # noqa: A002 — matches docs/SPEC-HARNESS-ADAPTER.md
+    ) -> Event | None:
         """Return the latest event of the given type, or the latest overall."""
         ...
 
