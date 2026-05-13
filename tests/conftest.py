@@ -17,15 +17,22 @@ def anyio_backend() -> str:
 
 @pytest_asyncio.fixture
 async def app_components() -> dict[str, Any]:
-    """Build an in-memory wake stack for tests."""
+    """Build an in-memory wake stack for tests.
+
+    Includes an empty ``AdapterRegistry`` and a ``SessionDispatcher`` so
+    API routes that exercise the dispatch path can run without booting
+    the real Claude SDK adapter.
+    """
     from tests.unit.fakes import (
         InMemoryAgentStore,
         InMemoryEnvironmentStore,
         InMemoryEventStore,
         InMemorySessionStore,
     )
+    from wake.adapters.registry import AdapterRegistry
     from wake.core.event_log import EventLog
     from wake.core.session import SessionStateMachine
+    from wake.runtime.dispatcher import SessionDispatcher
     from wake.tools.registry import ToolRegistry
 
     event_store = InMemoryEventStore()
@@ -35,6 +42,8 @@ async def app_components() -> dict[str, Any]:
     event_log = EventLog(event_store)
     session_machine = SessionStateMachine(session_store, event_log)
     tool_registry = ToolRegistry()
+    adapter_registry = AdapterRegistry()
+    dispatcher = SessionDispatcher(adapter_registry, event_log, tool_registry)
 
     return {
         "agent_store": agent_store,
@@ -44,6 +53,8 @@ async def app_components() -> dict[str, Any]:
         "event_log": event_log,
         "session_machine": session_machine,
         "tool_registry": tool_registry,
+        "adapter_registry": adapter_registry,
+        "dispatcher": dispatcher,
     }
 
 
@@ -58,6 +69,8 @@ async def app(app_components: dict[str, Any]) -> FastAPI:
         event_log=app_components["event_log"],
         session_machine=app_components["session_machine"],
         tool_registry=app_components["tool_registry"],
+        adapter_registry=app_components["adapter_registry"],
+        dispatcher=app_components["dispatcher"],
     )
 
 

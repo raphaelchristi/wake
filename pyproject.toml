@@ -51,6 +51,15 @@ dev = [
     "mypy>=1.13",
     "httpx[testing]",
 ]
+# Bundled reference adapter — installed from the in-tree workspace path so a
+# fresh ``pip install -e ".[adapter-claude-sdk]"`` wires entry-point discovery
+# without any extra commands.
+adapter-claude-sdk = [
+    "wake-adapter-claude-sdk",
+]
+all-adapters = [
+    "wake-adapter-claude-sdk",
+]
 
 [project.scripts]
 wake = "wake.cli.main:app"

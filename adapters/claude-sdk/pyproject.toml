@@ -1,0 +1,52 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "wake-adapter-claude-sdk"
+version = "0.1.0"
+description = "Wake HarnessAdapter for the Anthropic Claude SDK."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+authors = [
+    { name = "Wake contributors" },
+]
+keywords = ["wake", "wake-adapter", "anthropic", "claude", "ai-agents"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries",
+]
+dependencies = [
+    "wake-ai>=0.0.1",
+    "anthropic>=0.50",
+    "pydantic>=2.9",
+    "structlog>=24.4",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+]
+
+# Entry-point discovery: ``AdapterRegistry.discover()`` picks this up.
+[project.entry-points."wake.adapters"]
+claude-sdk = "wake_adapter_claude_sdk.adapter:ClaudeSDKAdapter"
+
+[project.urls]
+Homepage = "https://github.com/raphaelchristi/wake"
+Repository = "https://github.com/raphaelchristi/wake"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/wake_adapter_claude_sdk"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-v --strict-markers"
