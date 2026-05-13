@@ -1,0 +1,155 @@
+/**
+ * Thin fetch wrapper for the Wake API.
+ *
+ * Responsibilities:
+ *   - Inject the `X-Wake-API-Key` header from local auth state.
+ *   - Surface non-2xx responses as `WakeApiError` with a parsed body.
+ *   - Provide typed convenience methods for the routes the dashboard needs.
+ *
+ * Networking knobs (timeouts, retries) live in TanStack Query — this layer
+ * only does the one HTTP round-trip.
+ */
+import { getApiKey } from "@/lib/auth";
+
+import type {
+  AgentList,
+  EventList,
+  HealthResponse,
+  Session,
+  SessionList,
+  SessionListQuery,
+} from "./types";
+
+const DEFAULT_BASE =
+  (typeof process !== "undefined" && process.env.NEXT_PUBLIC_WAKE_API_BASE) ||
+  "http://localhost:8080";
+
+export class WakeApiError extends Error {
+  readonly status: number;
+  readonly body: unknown;
+
+  constructor(message: string, status: number, body: unknown) {
+    super(message);
+    this.name = "WakeApiError";
+    this.status = status;
+    this.body = body;
+  }
+
+  /** True for HTTP 401/403 — caller should bounce to /login. */
+  get isAuthError(): boolean {
+    return this.status === 401 || this.status === 403;
+  }
+}
+
+export interface ClientOptions {
+  baseUrl?: string;
+  apiKey?: string | null;
+  fetchImpl?: typeof fetch;
+}
+
+export class WakeApiClient {
+  private readonly baseUrl: string;
+  private readonly apiKeyOverride: string | null | undefined;
+  private readonly fetchImpl: typeof fetch;
+
+  constructor(options: ClientOptions = {}) {
+    this.baseUrl = (options.baseUrl ?? DEFAULT_BASE).replace(/\/$/, "");
+    this.apiKeyOverride = options.apiKey;
+    this.fetchImpl = options.fetchImpl ?? fetch.bind(globalThis);
+  }
+
+  private apiKey(): string | null {
+    if (this.apiKeyOverride !== undefined) return this.apiKeyOverride;
+    return getApiKey();
+  }
+
+  private headers(extra?: HeadersInit): Headers {
+    const h = new Headers(extra);
+    const key = this.apiKey();
+    if (key) h.set("X-Wake-API-Key", key);
+    if (!h.has("Accept")) h.set("Accept", "application/json");
+    return h;
+  }
+
+  private async request<T>(
+    method: string,
+    path: string,
+    options: { query?: Record<string, unknown>; body?: unknown } = {},
+  ): Promise<T> {
+    const url = new URL(`${this.baseUrl}${path}`);
+    if (options.query) {
+      for (const [k, v] of Object.entries(options.query)) {
+        if (v === undefined || v === null || v === "") continue;
+        url.searchParams.set(k, String(v));
+      }
+    }
+
+    const init: RequestInit = {
+      method,
+      headers: this.headers(options.body ? { "Content-Type": "application/json" } : undefined),
+    };
+    if (options.body !== undefined) {
+      init.body = JSON.stringify(options.body);
+    }
+
+    const res = await this.fetchImpl(url.toString(), init);
+    const text = await res.text();
+    let parsed: unknown = null;
+    if (text) {
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        parsed = text;
+      }
+    }
+
+    if (!res.ok) {
+      const detail =
+        parsed && typeof parsed === "object" && "detail" in parsed
+          ? String((parsed as { detail?: unknown }).detail)
+          : res.statusText;
+      throw new WakeApiError(`${method} ${path} → ${res.status} ${detail}`, res.status, parsed);
+    }
+    return parsed as T;
+  }
+
+  // -- routes used by the shell slice ----------------------------------------
+
+  health(): Promise<HealthResponse> {
+    return this.request<HealthResponse>("GET", "/health");
+  }
+
+  listSessions(query: SessionListQuery = {}): Promise<SessionList> {
+    return this.request<SessionList>("GET", "/v1/sessions", {
+      query: query as Record<string, unknown>,
+    });
+  }
+
+  getSession(id: string): Promise<Session> {
+    return this.request<Session>("GET", `/v1/sessions/${encodeURIComponent(id)}`);
+  }
+
+  listAgents(): Promise<AgentList> {
+    return this.request<AgentList>("GET", "/v1/agents");
+  }
+
+  listEvents(sessionId: string, since = 0): Promise<EventList> {
+    return this.request<EventList>(
+      "GET",
+      `/v1/sessions/${encodeURIComponent(sessionId)}/events`,
+      { query: { since } },
+    );
+  }
+}
+
+/** Lazily-instantiated default client. */
+let defaultClient: WakeApiClient | null = null;
+export function getDefaultClient(): WakeApiClient {
+  if (!defaultClient) defaultClient = new WakeApiClient();
+  return defaultClient;
+}
+
+/** Test-only — reset the default client between cases. */
+export function _resetDefaultClient(): void {
+  defaultClient = null;
+}
