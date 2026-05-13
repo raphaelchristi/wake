@@ -11,13 +11,29 @@ Plano de execução do Wake. Cada fase tem **gates de saída objetivos** — voc
 | Fase | Nome | Duração | Status |
 |---|---|---|---|
 | [Phase 0](./PHASE-0-design-lock.md) | Design Lock | 1-2 semanas | 🟡 in_progress |
-| [Phase 1](./PHASE-1-skeleton.md) | Skeleton | 2 semanas | ⚪ not_started |
+| [Phase 1](./PHASE-1-skeleton.md) | Skeleton | 2 semanas | ✅ done |
 | [Phase 2](./PHASE-2-first-adapter.md) | First Adapter | 2 semanas | ⚪ not_started |
 | [Phase 3](./PHASE-3-spec-validation.md) | Spec Validation | 3 semanas | ⚪ not_started |
 | [Phase 4](./PHASE-4-production-stack.md) | Production Stack | 3 semanas | ⚪ not_started |
 | [Phase 5](./PHASE-5-public-launch.md) | Public Launch | 1 semana | ⚪ not_started |
 
 **Total estimado:** 12-13 semanas (≈3 meses) para Wake v0.1.0 público com 4 adapters funcionando.
+
+### Phase 1 — done in 28 min wall-clock (multi-agent)
+
+3 Opus agents em worktrees isolados (`agent/foundation`, `agent/runtime`, `agent/cli`) construíram em paralelo:
+
+- **5.308 LoC source + 2.459 LoC tests**
+- **154 unit tests passing** (foundation 57 + runtime 72 + cli 25)
+- Coverage: foundation 97%, runtime 86%
+- Branches merged into main (`f47f670`, `6cc1658`, `db427cc`)
+- Post-merge integration fixes (`d35d8c2`) — 8 interface mismatches consertados
+
+Lições para próximas fases:
+- Contrato de interface (`PHASE-1-CONTRACT.md`) foi essencial para minimizar conflitos
+- Scaffolding pré-merge (types.py, pyproject.toml) evitou trio de conflitos triviais
+- Agents respeitaram boundaries — todos commitaram só seus paths
+- Interface mismatches inevitáveis: aliases + helpers resolvem rápido
 
 ---
 
