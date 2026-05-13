@@ -1,0 +1,889 @@
+{
+  "data": [
+    {
+      "id": "01HQR2K7VXBZ9MNPL3WYCT8000",
+      "session_id": "sess_01HQR2K7VXBZ9MNPL3WYCT8000",
+      "seq": 0,
+      "type": "user.message",
+      "payload": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Build a CSV parser with tests"
+          }
+        ]
+      },
+      "parent_id": null,
+      "metadata": null,
+      "created_at": "2026-05-13T12:00:00+00:00"
+    },
+    {
+      "id": "01HQR2K7VXBZ9MNPL3WYCT8001",
+      "session_id": "sess_01HQR2K7VXBZ9MNPL3WYCT8000",
+      "seq": 1,
+      "type": "status",
+      "payload": {
+        "from": "idle",
+        "to": "running"
+      },
+      "parent_id": null,
+      "metadata": null,
+      "created_at": "2026-05-13T12:00:02+00:00"
+    },
+    {
+      "id": "01HQR2K7VXBZ9MNPL3WYCT8002",
+      "session_id": "sess_01HQR2K7VXBZ9MNPL3WYCT8000",
+      "seq": 2,
+      "type": "provision",
+      "payload": {
+        "container_id": "wake_sandbox_abc123",
+        "backend": "sandbox-runtime"
+      },
+      "parent_id": null,
+      "metadata": null,
+      "created_at": "2026-05-13T12:00:04+00:00"
+    },
+    {
+      "id": "01HQR2K7VXBZ9MNPL3WYCT8003",
+      "session_id": "sess_01HQR2K7VXBZ9MNPL3WYCT8000",
+      "seq": 3,
+      "type": "assistant.thinking",
+      "payload": {
+        "content": "Let me first inspect the repo structure."
+      },
+      "parent_id": null,
+      "metadata": null,
+      "created_at": "2026-05-13T12:00:06+00:00"
+    },
+    {
+      "id": "01HQR2K7VXBZ9MNPL3WYCT8004",
+      "session_id": "sess_01HQR2K7VXBZ9MNPL3WYCT8000",
+      "seq": 4,
+      "type": "assistant.delta",
+      "payload": {
+        "index": 0,
+        "delta": {
+          "type": "text_delta",
+          "text": "Starting..."
+        }
+      },
+      "parent_id": null,
+      "metadata": null,
+      "created_at": "2026-05-13T12:00:08+00:00"
+    },
+    {
+      "id": "01HQR2K7VXBZ9MNPL3WYCT8005",
+      "session_id": "sess_01HQR2K7VXBZ9MNPL3WYCT8000",
+      "seq": 5,
+      "type": "tool_use",
+      "payload": {
+        "tool_use_id": "tu_001",
+        "name": "bash",
+        "input": {
+          "command": "cd /workspace"
+        }
+      },
+      "parent_id": null,
+      "metadata": null,
+      "created_at": "2026-05-13T12:00:10+00:00"
+    },
+    {
+      "id": "01HQR2K7VXBZ9MNPL3WYCT8006",
+      "session_id": "sess_01HQR2K7VXBZ9MNPL3WYCT8000",
+      "seq": 6,
+      "type": "tool_result",
+      "payload": {
+        "tool_use_id": "tu_001",
+        "content": [
+          {
+            "type": "text",
+            "text": "ok"
+          }
+        ],
+        "is_error": false
+      },
+      "parent_id": "01HQR2K7VXBZ9MNPL3WYCT8005",
+      "metadata": null,
+      "created_at": "2026-05-13T12:00:12+00:00"
+    },
+    {
+      "id": "01HQR2K7VXBZ9MNPL3WYCT8007",
+      "session_id": "sess_01HQR2K7VXBZ9MNPL3WYCT8000",
+      "seq": 7,
+      "type": "tool_use",
+      "payload": {
+        "tool_use_id": "tu_002",
+        "name": "bash",
+        "input": {
+          "command": "ls -la"
+        }
+      },
+      "parent_id": null,
+      "metadata": null,
+      "created_at": "2026-05-13T12:00:14+00:00"
+    },
+    {
+      "id": "01HQR2K7VXBZ9MNPL3WYCT8008",
+      "session_id": "sess_01HQR2K7VXBZ9MNPL3WYCT8000",
+      "seq": 8,
+      "type": "tool_result",
+      "payload": {
+        "tool_use_id": "tu_002",
+        "content": [
+          {
+            "type": "text",
+            "text": "total 24\ndrwxr-xr-x 2 user user 4096 May 13 12:00 src\ndrwxr-xr-x 2 user user 4096 May 13 12:00 tests\n-rw-r--r-- 1 user user  100 May 13 12:00 README.md"
+          }
+        ],
+        "is_error": false
+      },
+      "parent_id": "01HQR2K7VXBZ9MNPL3WYCT8007",
+      "metadata": null,
+      "created_at": "2026-05-13T12:00:16+00:00"
+    },
+    {
+      "id": "01HQR2K7VXBZ9MNPL3WYCT8009",
+      "session_id": "sess_01HQR2K7VXBZ9MNPL3WYCT8000",
+      "seq": 9,
+      "type": "vault.access",
+      "payload": {
+        "vault_id": "github_token",
+        "tool_use_id": "tu_003",
+        "purpose": "github.read"
+      },
+      "parent_id": null,
+      "metadata": null,
+      "created_at": "2026-05-13T12:00:18+00:00"
+    },
+    {
+      "id": "01HQR2K7VXBZ9MNPL3WYCT8010",
+      "session_id": "sess_01HQR2K7VXBZ9MNPL3WYCT8000",
+      "seq": 10,
+      "type": "tool_use",
+      "payload": {
+        "tool_use_id": "tu_003",
+        "name": "file_read",
+        "input": {
+          "path": "README.md"
+        }
+      },
+      "parent_id": null,
+      "metadata": null,
+      "created_at": "2026-05-13T12:00:20+00:00"
+    },
+    {
+      "id": "01HQR2K7VXBZ9MNPL3WYCT8011",
+      "session_id": "sess_01HQR2K7VXBZ9MNPL3WYCT8000",
+      "seq": 11,
+      "type": "tool_result",
+      "payload": {
+        "tool_use_id": "tu_003",
+        "content": [
+          {
+            "type": "text",
+            "text": "# Project\n\nCSV parser project."
+          }
+        ],
+        "is_error": false
+      },
+      "parent_id": null,
+      "metadata": null,
+      "created_at": "2026-05-13T12:00:22+00:00"
+    },
+    {
+      "id": "01HQR2K7VXBZ9MNPL3WYCT8012",
+      "session_id": "sess_01HQR2K7VXBZ9MNPL3WYCT8000",
+      "seq": 12,
+      "type": "assistant.message",
+      "payload": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Repo has src/ and tests/. I'll add csv_parser.py."
+          }
+        ],
+        "stop_reason": "tool_use",
+        "usage": {
+          "input_tokens": 1200,
+          "output_tokens": 80
+        }
+      },
+      "parent_id": null,
+      "metadata": null,
+      "created_at": "2026-05-13T12:00:24+00:00"
+    },
+    {
+      "id": "01HQR2K7VXBZ9MNPL3WYCT8013",
+      "session_id": "sess_01HQR2K7VXBZ9MNPL3WYCT8000",
+      "seq": 13,
+      "type": "tool_use",
+      "payload": {
+        "tool_use_id": "tu_004",
+        "name": "file_write",
+        "input": {
+          "path": "src/csv_parser.py",
+          "content": "import csv\n\ndef parse(p):\n    with open(p) as f:\n        return list(csv.reader(f))"
+        }
+      },
+      "parent_id": null,
+      "metadata": null,
+      "created_at": "2026-05-13T12:00:26+00:00"
+    },
+    {
+      "id": "01HQR2K7VXBZ9MNPL3WYCT8014",
+      "session_id": "sess_01HQR2K7VXBZ9MNPL3WYCT8000",
+      "seq": 14,
+      "type": "tool_result",
+      "payload": {
+        "tool_use_id": "tu_004",
+        "content": [
+          {
+            "type": "text",
+            "text": "wrote 5 lines"
+          }
+        ],
+        "is_error": false
+      },
+      "parent_id": null,
+      "metadata": null,
+      "created_at": "2026-05-13T12:00:28+00:00"
+    },
+    {
+      "id": "01HQR2K7VXBZ9MNPL3WYCT8015",
+      "session_id": "sess_01HQR2K7VXBZ9MNPL3WYCT8000",
+      "seq": 15,
+      "type": "tool_use",
+      "payload": {
+        "tool_use_id": "tu_005",
+        "name": "file_write",
+        "input": {
+          "path": "tests/test_csv_parser.py",
+          "content": "from src.csv_parser import parse\n\ndef test_parse():\n    pass"
+        }
+      },
+      "parent_id": null,
+      "metadata": null,
+      "created_at": "2026-05-13T12:00:30+00:00"
+    },
+    {
+      "id": "01HQR2K7VXBZ9MNPL3WYCT8016",
+      "session_id": "sess_01HQR2K7VXBZ9MNPL3WYCT8000",
+      "seq": 16,
+      "type": "tool_result",
+      "payload": {
+        "tool_use_id": "tu_005",
+        "content": [
+          {
+            "type": "text",
+            "text": "wrote 4 lines"
+          }
+        ],
+        "is_error": false
+      },
+      "parent_id": null,
+      "metadata": null,
+      "created_at": "2026-05-13T12:00:32+00:00"
+    },
+    {
+      "id": "01HQR2K7VXBZ9MNPL3WYCT8017",
+      "session_id": "sess_01HQR2K7VXBZ9MNPL3WYCT8000",
+      "seq": 17,
+      "type": "tool_use",
+      "payload": {
+        "tool_use_id": "tu_006",
+        "name": "bash",
+        "input": {
+          "command": "cd /workspace/tests && pytest -q"
+        }
+      },
+      "parent_id": null,
+      "metadata": null,
+      "created_at": "2026-05-13T12:00:34+00:00"
+    },
+    {
+      "id": "01HQR2K7VXBZ9MNPL3WYCT8018",
+      "session_id": "sess_01HQR2K7VXBZ9MNPL3WYCT8000",
+      "seq": 18,
+      "type": "tool_result",
+      "payload": {
+        "tool_use_id": "tu_006",
+        "content": [
+          {
+            "type": "text",
+            "text": "1 passed in 0.05s"
+          }
+        ],
+        "is_error": false
+      },
+      "parent_id": null,
+      "metadata": null,
+      "created_at": "2026-05-13T12:00:36+00:00"
+    },
+    {
+      "id": "01HQR2K7VXBZ9MNPL3WYCT8019",
+      "session_id": "sess_01HQR2K7VXBZ9MNPL3WYCT8000",
+      "seq": 19,
+      "type": "tool_use",
+      "payload": {
+        "tool_use_id": "tu_007",
+        "name": "bash",
+        "input": {
+          "command": "cd .."
+        }
+      },
+      "parent_id": null,
+      "metadata": null,
+      "created_at": "2026-05-13T12:00:38+00:00"
+    },
+    {
+      "id": "01HQR2K7VXBZ9MNPL3WYCT8020",
+      "session_id": "sess_01HQR2K7VXBZ9MNPL3WYCT8000",
+      "seq": 20,
+      "type": "tool_result",
+      "payload": {
+        "tool_use_id": "tu_007",
+        "content": [
+          {
+            "type": "text",
+            "text": "ok"
+          }
+        ],
+        "is_error": false
+      },
+      "parent_id": null,
+      "metadata": null,
+      "created_at": "2026-05-13T12:00:40+00:00"
+    },
+    {
+      "id": "01HQR2K7VXBZ9MNPL3WYCT8021",
+      "session_id": "sess_01HQR2K7VXBZ9MNPL3WYCT8000",
+      "seq": 21,
+      "type": "assistant.thinking",
+      "payload": {
+        "content": "Adding edge case handling."
+      },
+      "parent_id": null,
+      "metadata": null,
+      "created_at": "2026-05-13T12:00:42+00:00"
+    },
+    {
+      "id": "01HQR2K7VXBZ9MNPL3WYCT8022",
+      "session_id": "sess_01HQR2K7VXBZ9MNPL3WYCT8000",
+      "seq": 22,
+      "type": "tool_use",
+      "payload": {
+        "tool_use_id": "tu_008",
+        "name": "file_edit",
+        "input": {
+          "path": "src/csv_parser.py",
+          "old_string": "list(csv.reader(f))",
+          "new_string": "list(csv.reader(f)) if p else []"
+        }
+      },
+      "parent_id": null,
+      "metadata": null,
+      "created_at": "2026-05-13T12:00:44+00:00"
+    },
+    {
+      "id": "01HQR2K7VXBZ9MNPL3WYCT8023",
+      "session_id": "sess_01HQR2K7VXBZ9MNPL3WYCT8000",
+      "seq": 23,
+      "type": "tool_result",
+      "payload": {
+        "tool_use_id": "tu_008",
+        "content": [
+          {
+            "type": "text",
+            "text": "wrote 1 hunk"
+          }
+        ],
+        "is_error": false
+      },
+      "parent_id": null,
+      "metadata": null,
+      "created_at": "2026-05-13T12:00:46+00:00"
+    },
+    {
+      "id": "01HQR2K7VXBZ9MNPL3WYCT8024",
+      "session_id": "sess_01HQR2K7VXBZ9MNPL3WYCT8000",
+      "seq": 24,
+      "type": "tool_use",
+      "payload": {
+        "tool_use_id": "tu_009",
+        "name": "bash",
+        "input": {
+          "command": "pytest -q"
+        }
+      },
+      "parent_id": null,
+      "metadata": null,
+      "created_at": "2026-05-13T12:00:48+00:00"
+    },
+    {
+      "id": "01HQR2K7VXBZ9MNPL3WYCT8025",
+      "session_id": "sess_01HQR2K7VXBZ9MNPL3WYCT8000",
+      "seq": 25,
+      "type": "tool_result",
+      "payload": {
+        "tool_use_id": "tu_009",
+        "content": [
+          {
+            "type": "text",
+            "text": "1 passed in 0.04s"
+          }
+        ],
+        "is_error": false
+      },
+      "parent_id": null,
+      "metadata": null,
+      "created_at": "2026-05-13T12:00:50+00:00"
+    },
+    {
+      "id": "01HQR2K7VXBZ9MNPL3WYCT8026",
+      "session_id": "sess_01HQR2K7VXBZ9MNPL3WYCT8000",
+      "seq": 26,
+      "type": "tool_use",
+      "payload": {
+        "tool_use_id": "tu_010",
+        "name": "file_write",
+        "input": {
+          "path": "tests/test_edge_cases.py"
+        }
+      },
+      "parent_id": null,
+      "metadata": null,
+      "created_at": "2026-05-13T12:00:52+00:00"
+    },
+    {
+      "id": "01HQR2K7VXBZ9MNPL3WYCT8027",
+      "session_id": "sess_01HQR2K7VXBZ9MNPL3WYCT8000",
+      "seq": 27,
+      "type": "tool_result",
+      "payload": {
+        "tool_use_id": "tu_010",
+        "content": [
+          {
+            "type": "text",
+            "text": "wrote tests"
+          }
+        ],
+        "is_error": false
+      },
+      "parent_id": null,
+      "metadata": null,
+      "created_at": "2026-05-13T12:00:54+00:00"
+    },
+    {
+      "id": "01HQR2K7VXBZ9MNPL3WYCT8028",
+      "session_id": "sess_01HQR2K7VXBZ9MNPL3WYCT8000",
+      "seq": 28,
+      "type": "tool_use",
+      "payload": {
+        "tool_use_id": "tu_011",
+        "name": "bash",
+        "input": {
+          "command": "pytest -q tests/test_edge_cases.py"
+        }
+      },
+      "parent_id": null,
+      "metadata": null,
+      "created_at": "2026-05-13T12:00:56+00:00"
+    },
+    {
+      "id": "01HQR2K7VXBZ9MNPL3WYCT8029",
+      "session_id": "sess_01HQR2K7VXBZ9MNPL3WYCT8000",
+      "seq": 29,
+      "type": "tool_result",
+      "payload": {
+        "tool_use_id": "tu_011",
+        "content": [
+          {
+            "type": "text",
+            "text": "FAILED test_edge_cases\nAssertionError"
+          }
+        ],
+        "is_error": true,
+        "error_code": "unknown"
+      },
+      "parent_id": null,
+      "metadata": null,
+      "created_at": "2026-05-13T12:00:58+00:00"
+    },
+    {
+      "id": "01HQR2K7VXBZ9MNPL3WYCT8030",
+      "session_id": "sess_01HQR2K7VXBZ9MNPL3WYCT8000",
+      "seq": 30,
+      "type": "error",
+      "payload": {
+        "error_type": "tool_failure",
+        "message": "test failed"
+      },
+      "parent_id": null,
+      "metadata": null,
+      "created_at": "2026-05-13T12:01:00+00:00"
+    },
+    {
+      "id": "01HQR2K7VXBZ9MNPL3WYCT8031",
+      "session_id": "sess_01HQR2K7VXBZ9MNPL3WYCT8000",
+      "seq": 31,
+      "type": "assistant.thinking",
+      "payload": {
+        "content": "Test failure: let me fix the edge case."
+      },
+      "parent_id": null,
+      "metadata": null,
+      "created_at": "2026-05-13T12:01:02+00:00"
+    },
+    {
+      "id": "01HQR2K7VXBZ9MNPL3WYCT8032",
+      "session_id": "sess_01HQR2K7VXBZ9MNPL3WYCT8000",
+      "seq": 32,
+      "type": "tool_use",
+      "payload": {
+        "tool_use_id": "tu_012",
+        "name": "file_edit",
+        "input": {
+          "path": "src/csv_parser.py",
+          "old_string": "if p else []",
+          "new_string": "if p and isinstance(p, str) else []"
+        }
+      },
+      "parent_id": null,
+      "metadata": null,
+      "created_at": "2026-05-13T12:01:04+00:00"
+    },
+    {
+      "id": "01HQR2K7VXBZ9MNPL3WYCT8033",
+      "session_id": "sess_01HQR2K7VXBZ9MNPL3WYCT8000",
+      "seq": 33,
+      "type": "tool_result",
+      "payload": {
+        "tool_use_id": "tu_012",
+        "content": [
+          {
+            "type": "text",
+            "text": "wrote 1 hunk"
+          }
+        ],
+        "is_error": false
+      },
+      "parent_id": null,
+      "metadata": null,
+      "created_at": "2026-05-13T12:01:06+00:00"
+    },
+    {
+      "id": "01HQR2K7VXBZ9MNPL3WYCT8034",
+      "session_id": "sess_01HQR2K7VXBZ9MNPL3WYCT8000",
+      "seq": 34,
+      "type": "tool_use",
+      "payload": {
+        "tool_use_id": "tu_013",
+        "name": "bash",
+        "input": {
+          "command": "pytest -q"
+        }
+      },
+      "parent_id": null,
+      "metadata": null,
+      "created_at": "2026-05-13T12:01:08+00:00"
+    },
+    {
+      "id": "01HQR2K7VXBZ9MNPL3WYCT8035",
+      "session_id": "sess_01HQR2K7VXBZ9MNPL3WYCT8000",
+      "seq": 35,
+      "type": "tool_result",
+      "payload": {
+        "tool_use_id": "tu_013",
+        "content": [
+          {
+            "type": "text",
+            "text": "2 passed in 0.05s"
+          }
+        ],
+        "is_error": false
+      },
+      "parent_id": null,
+      "metadata": null,
+      "created_at": "2026-05-13T12:01:10+00:00"
+    },
+    {
+      "id": "01HQR2K7VXBZ9MNPL3WYCT8036",
+      "session_id": "sess_01HQR2K7VXBZ9MNPL3WYCT8000",
+      "seq": 36,
+      "type": "tool_use",
+      "payload": {
+        "tool_use_id": "tu_014",
+        "name": "bash",
+        "input": {
+          "command": "git status"
+        }
+      },
+      "parent_id": null,
+      "metadata": null,
+      "created_at": "2026-05-13T12:01:12+00:00"
+    },
+    {
+      "id": "01HQR2K7VXBZ9MNPL3WYCT8037",
+      "session_id": "sess_01HQR2K7VXBZ9MNPL3WYCT8000",
+      "seq": 37,
+      "type": "tool_result",
+      "payload": {
+        "tool_use_id": "tu_014",
+        "content": [
+          {
+            "type": "text",
+            "text": "modified: src/csv_parser.py\nadded: tests/test_csv_parser.py\nadded: tests/test_edge_cases.py"
+          }
+        ],
+        "is_error": false
+      },
+      "parent_id": null,
+      "metadata": null,
+      "created_at": "2026-05-13T12:01:14+00:00"
+    },
+    {
+      "id": "01HQR2K7VXBZ9MNPL3WYCT8038",
+      "session_id": "sess_01HQR2K7VXBZ9MNPL3WYCT8000",
+      "seq": 38,
+      "type": "vault.access",
+      "payload": {
+        "vault_id": "github_token",
+        "tool_use_id": "tu_015",
+        "purpose": "github.commit"
+      },
+      "parent_id": null,
+      "metadata": null,
+      "created_at": "2026-05-13T12:01:16+00:00"
+    },
+    {
+      "id": "01HQR2K7VXBZ9MNPL3WYCT8039",
+      "session_id": "sess_01HQR2K7VXBZ9MNPL3WYCT8000",
+      "seq": 39,
+      "type": "tool_use",
+      "payload": {
+        "tool_use_id": "tu_015",
+        "name": "bash",
+        "input": {
+          "command": "git add -A && git commit -m 'add csv_parser'"
+        }
+      },
+      "parent_id": null,
+      "metadata": null,
+      "created_at": "2026-05-13T12:01:18+00:00"
+    },
+    {
+      "id": "01HQR2K7VXBZ9MNPL3WYCT8040",
+      "session_id": "sess_01HQR2K7VXBZ9MNPL3WYCT8000",
+      "seq": 40,
+      "type": "tool_result",
+      "payload": {
+        "tool_use_id": "tu_015",
+        "content": [
+          {
+            "type": "text",
+            "text": "[main abc123] add csv_parser"
+          }
+        ],
+        "is_error": false
+      },
+      "parent_id": null,
+      "metadata": null,
+      "created_at": "2026-05-13T12:01:20+00:00"
+    },
+    {
+      "id": "01HQR2K7VXBZ9MNPL3WYCT8041",
+      "session_id": "sess_01HQR2K7VXBZ9MNPL3WYCT8000",
+      "seq": 41,
+      "type": "artifact",
+      "payload": {
+        "name": "csv_parser.py",
+        "kind": "file",
+        "uri": "wake://artifacts/sess_xyz/src/csv_parser.py",
+        "mime_type": "text/x-python",
+        "size_bytes": 192
+      },
+      "parent_id": null,
+      "metadata": null,
+      "created_at": "2026-05-13T12:01:22+00:00"
+    },
+    {
+      "id": "01HQR2K7VXBZ9MNPL3WYCT8042",
+      "session_id": "sess_01HQR2K7VXBZ9MNPL3WYCT8000",
+      "seq": 42,
+      "type": "assistant.message",
+      "payload": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Done. Created src/csv_parser.py with 2 passing tests and committed."
+          }
+        ],
+        "stop_reason": "end_turn",
+        "usage": {
+          "input_tokens": 2500,
+          "output_tokens": 180,
+          "cache_read_input_tokens": 1200
+        }
+      },
+      "parent_id": null,
+      "metadata": null,
+      "created_at": "2026-05-13T12:01:24+00:00"
+    },
+    {
+      "id": "01HQR2K7VXBZ9MNPL3WYCT8043",
+      "session_id": "sess_01HQR2K7VXBZ9MNPL3WYCT8000",
+      "seq": 43,
+      "type": "status",
+      "payload": {
+        "from": "running",
+        "to": "idle"
+      },
+      "parent_id": null,
+      "metadata": null,
+      "created_at": "2026-05-13T12:01:26+00:00"
+    },
+    {
+      "id": "01HQR2K7VXBZ9MNPL3WYCT8044",
+      "session_id": "sess_01HQR2K7VXBZ9MNPL3WYCT8000",
+      "seq": 44,
+      "type": "user.message",
+      "payload": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Now add documentation."
+          }
+        ]
+      },
+      "parent_id": null,
+      "metadata": null,
+      "created_at": "2026-05-13T12:01:28+00:00"
+    },
+    {
+      "id": "01HQR2K7VXBZ9MNPL3WYCT8045",
+      "session_id": "sess_01HQR2K7VXBZ9MNPL3WYCT8000",
+      "seq": 45,
+      "type": "status",
+      "payload": {
+        "from": "idle",
+        "to": "running"
+      },
+      "parent_id": null,
+      "metadata": null,
+      "created_at": "2026-05-13T12:01:30+00:00"
+    },
+    {
+      "id": "01HQR2K7VXBZ9MNPL3WYCT8046",
+      "session_id": "sess_01HQR2K7VXBZ9MNPL3WYCT8000",
+      "seq": 46,
+      "type": "assistant.thinking",
+      "payload": {
+        "content": "Adding docstrings."
+      },
+      "parent_id": null,
+      "metadata": null,
+      "created_at": "2026-05-13T12:01:32+00:00"
+    },
+    {
+      "id": "01HQR2K7VXBZ9MNPL3WYCT8047",
+      "session_id": "sess_01HQR2K7VXBZ9MNPL3WYCT8000",
+      "seq": 47,
+      "type": "tool_use",
+      "payload": {
+        "tool_use_id": "tu_016",
+        "name": "file_edit",
+        "input": {
+          "path": "src/csv_parser.py"
+        }
+      },
+      "parent_id": null,
+      "metadata": null,
+      "created_at": "2026-05-13T12:01:34+00:00"
+    },
+    {
+      "id": "01HQR2K7VXBZ9MNPL3WYCT8048",
+      "session_id": "sess_01HQR2K7VXBZ9MNPL3WYCT8000",
+      "seq": 48,
+      "type": "tool_result",
+      "payload": {
+        "tool_use_id": "tu_016",
+        "content": [
+          {
+            "type": "text",
+            "text": "wrote 1 hunk"
+          }
+        ],
+        "is_error": false
+      },
+      "parent_id": null,
+      "metadata": null,
+      "created_at": "2026-05-13T12:01:36+00:00"
+    },
+    {
+      "id": "01HQR2K7VXBZ9MNPL3WYCT8049",
+      "session_id": "sess_01HQR2K7VXBZ9MNPL3WYCT8000",
+      "seq": 49,
+      "type": "tool_use",
+      "payload": {
+        "tool_use_id": "tu_017",
+        "name": "bash",
+        "input": {
+          "command": "pytest -q"
+        }
+      },
+      "parent_id": null,
+      "metadata": null,
+      "created_at": "2026-05-13T12:01:38+00:00"
+    },
+    {
+      "id": "01HQR2K7VXBZ9MNPL3WYCT8050",
+      "session_id": "sess_01HQR2K7VXBZ9MNPL3WYCT8000",
+      "seq": 50,
+      "type": "tool_result",
+      "payload": {
+        "tool_use_id": "tu_017",
+        "content": [
+          {
+            "type": "text",
+            "text": "2 passed"
+          }
+        ],
+        "is_error": false
+      },
+      "parent_id": null,
+      "metadata": null,
+      "created_at": "2026-05-13T12:01:40+00:00"
+    },
+    {
+      "id": "01HQR2K7VXBZ9MNPL3WYCT8051",
+      "session_id": "sess_01HQR2K7VXBZ9MNPL3WYCT8000",
+      "seq": 51,
+      "type": "assistant.message",
+      "payload": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Docstrings added."
+          }
+        ],
+        "stop_reason": "end_turn"
+      },
+      "parent_id": null,
+      "metadata": null,
+      "created_at": "2026-05-13T12:01:42+00:00"
+    },
+    {
+      "id": "01HQR2K7VXBZ9MNPL3WYCT8052",
+      "session_id": "sess_01HQR2K7VXBZ9MNPL3WYCT8000",
+      "seq": 52,
+      "type": "status",
+      "payload": {
+        "from": "running",
+        "to": "idle"
+      },
+      "parent_id": null,
+      "metadata": null,
+      "created_at": "2026-05-13T12:01:44+00:00"
+    }
+  ]
+}
