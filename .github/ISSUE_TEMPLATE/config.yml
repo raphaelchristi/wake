@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Discussion / question
+    url: https://github.com/raphaelchristi/wake/discussions
+    about: Open-ended thinking, design discussions, or how-do-I questions.
+  - name: Adapter contribution
+    url: https://github.com/raphaelchristi/wake/blob/main/docs/WRITING-AN-ADAPTER.md
+    about: Building a new HarnessAdapter for a framework? Start here.
