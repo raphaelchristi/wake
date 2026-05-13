@@ -259,6 +259,11 @@ brings up six services:
 
 ```bash
 cp .env.example .env  # populate POSTGRES_PASSWORD, INFISICAL_* keys, OAuth keys
+
+# Required: shared API key for dashboard ↔ backend. Compose fails
+# fast if you forget to export it.
+export WAKE_API_KEY="$(openssl rand -hex 32)"
+
 docker compose -f deploy/docker-compose.yml up -d
 docker compose -f deploy/docker-compose.yml ps
 ```
@@ -304,12 +309,35 @@ single configmap + secret pair.
 ### Install
 
 ```bash
+# Generate a strong key once and reuse it for every install.
+export WAKE_API_KEY="$(openssl rand -hex 32)"
+
 helm install wake deploy/helm/wake \
   --namespace wake --create-namespace \
-  --set apiKey="$WAKE_API_KEY" \
-  --set frontend.image=wake-ai/wake-dashboard:0.5.0 \
-  --set frontend.host=wake.example.com
+  --set auth.apiKey="$WAKE_API_KEY" \
+  --set frontend.image.repository=wake-ai/dashboard \
+  --set frontend.image.tag=0.5.0 \
+  --set frontend.publicApiUrl=https://wake.example.com
 ```
+
+For production, reference an existing Secret instead of passing the
+key on the CLI:
+
+```bash
+kubectl -n wake create secret generic wake-api-key-secret \
+  --from-literal=key="$(openssl rand -hex 32)"
+
+helm install wake deploy/helm/wake \
+  --namespace wake \
+  --set auth.apiKeySecretRef.name=wake-api-key-secret \
+  --set auth.apiKeySecretRef.key=key
+```
+
+The chart refuses to install when `auth.required=true` (the default)
+and neither `auth.apiKey` nor `auth.apiKeySecretRef.name` is set —
+this surfaces a missing API key as a clear install error instead of
+shipping a fail-open API. Set `auth.required=false` only for fully
+internal dev clusters where you understand the risk.
 
 ### Lint before you ship
 
@@ -371,7 +399,8 @@ there is no per-pod state to be sticky to.
 
 | Variable | Default | Description |
 |---|---|---|
-| `WAKE_API_KEY` | — | Shared API key for dashboard auth. **Required**. |
+| `WAKE_API_KEY` | — | Shared API key for dashboard auth. **Required in production.** |
+| `WAKE_AUTH_REQUIRED` | `false` | Fail-closed flag. When `true`, every authenticated route returns 503 unless `WAKE_API_KEY` is also set — guards against deploy manifests that forget to inject the Secret. Helm + Compose default to `true`. |
 | `WAKE_DATABASE_URL` | `sqlite+aiosqlite:///wake.db` | SQLAlchemy URL. Use `postgresql+asyncpg://...` for prod. |
 | `WAKE_REDIS_URL` | `redis://localhost:6379` | Used for pub/sub fan-out + queue. |
 | `WAKE_VAULT_URL` | unset | If set, enables the Infisical vault adapter. Vault routes return 503 when unset. |
@@ -384,17 +413,34 @@ there is no per-pod state to be sticky to.
 | `WAKE_OAUTH_<PROVIDER>_CLIENT_SECRET` | — | OAuth client secret. |
 | `WAKE_OAUTH_<PROVIDER>_REDIRECT_URI` | `http://localhost:3000/oauth/callback` | Override per env. |
 
+#### Auth modes (canonical truth table)
+
+| `WAKE_API_KEY` | `WAKE_AUTH_REQUIRED` | Behaviour |
+|---|---|---|
+| unset | unset / false | **No-op** — accepts every request. Dev only. |
+| set   | any           | Header `X-Wake-API-Key` must equal the value. |
+| unset | `true`        | **Fail-closed** — every auth'd route returns 503 "auth required but not configured". |
+
+`/health`, `/docs`, `/redoc`, `/openapi.json` are unauthenticated in
+every mode.
+
 ### Frontend (`wake-dashboard`)
 
 | Variable | Default | Description |
 |---|---|---|
-| `NEXT_PUBLIC_WAKE_API_BASE` | `http://localhost:8080` | URL the browser uses to reach the API. |
+| `NEXT_PUBLIC_WAKE_API_BASE` | `http://localhost:8080` | URL the **browser** uses to reach the API. Public, baked into the client bundle at build time. |
+| `WAKE_API_URL` | unset (falls back to `NEXT_PUBLIC_WAKE_API_BASE`) | URL the **Next.js server process** uses to reach the API (OAuth callback proxy). Private, never exposed to the browser. Set to the in-cluster Service URL in production. |
+| `WAKE_API_KEY` | unset | Server-side API key used by `/oauth/callback/api` to inject `X-Wake-API-Key`. Browser never sees it. |
 | `NEXT_PUBLIC_WAKE_BRAND_NAME` | `Wake` | Brand name shown in the topbar. |
-| `WAKE_API_KEY` | unset | If set, used by the server-side `/oauth/callback/api` proxy as an `X-Wake-API-Key` header. Browser never sees it. |
 | `PLAYWRIGHT_BASE_URL` | `http://localhost:3000` | Override for e2e tests against a non-default port. |
 
 All `NEXT_PUBLIC_*` variables are **baked into the bundle at build
 time**; the others are read at runtime by the Node server.
+
+> **Deprecated:** `NEXT_PUBLIC_API_URL` (pre-Phase-5.1 alias). The
+> client still falls back to it with a `console.warn` for one
+> transition release; remove from your deploy manifests and use
+> `NEXT_PUBLIC_WAKE_API_BASE` going forward.
 
 ---
 

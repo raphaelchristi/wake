@@ -63,8 +63,14 @@ The dashboard authenticates against the Wake API via an API key sent in the
 
 | Var | Default | Purpose |
 | --- | --- | --- |
-| `NEXT_PUBLIC_WAKE_API_BASE` | `http://localhost:8080` | Base URL of the Wake API |
+| `NEXT_PUBLIC_WAKE_API_BASE` | `http://localhost:8080` | **Browser-facing** base URL of the Wake API. Public, baked into the client bundle at build time. |
+| `WAKE_API_URL` | falls back to `NEXT_PUBLIC_WAKE_API_BASE` | **Server-side** base URL used by Next.js route handlers (OAuth callback proxy). Private; never exposed to the browser. |
+| `WAKE_API_KEY` | unset | Server-side API key injected by `/oauth/callback/api` as `X-Wake-API-Key`. Browser never sees it. |
 | `WAKE_OPENAPI_URL` | `http://localhost:8080/openapi.json` | Where `pnpm openapi:generate` fetches the schema |
+
+> **Deprecated:** `NEXT_PUBLIC_API_URL` (pre-Phase-5.1). The client
+> still falls back with a `console.warn` for one transition release;
+> remove from deploy manifests and use `NEXT_PUBLIC_WAKE_API_BASE`.
 
 ## Codegen
 
