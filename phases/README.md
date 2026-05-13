@@ -15,7 +15,8 @@ Plano de execução do Wake. Cada fase tem **gates de saída objetivos** — voc
 | [Phase 2](./PHASE-2-first-adapter.md) | First Adapter | 2 semanas | ✅ done |
 | [Phase 3](./PHASE-3-spec-validation.md) | Spec Validation | 3 semanas | ✅ done |
 | [Phase 4](./PHASE-4-production-stack.md) | Production Stack | 3 semanas | ✅ done |
-| [Phase 5](./PHASE-5-public-launch.md) | Public Launch | 1 semana | ⚪ not_started |
+| [Phase 5](./PHASE-5-operator-ui.md) | Operator UI (Wake Dashboard) | 3-5 semanas | 🟡 in_progress |
+| [Phase 6](./PHASE-6-public-launch.md) | Public Launch | 1 semana | ⚪ not_started |
 
 **Total estimado:** 12-13 semanas (≈3 meses) para Wake v0.1.0 público com 4 adapters funcionando.
 
