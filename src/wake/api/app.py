@@ -1,11 +1,13 @@
 # ruff: noqa: TC003
 """FastAPI application factory.
 
-`create_app()` wires routes + dependencies and returns a FastAPI instance.
-`app` is a module-level instance for `uvicorn wake.api.app:app`.
+``create_app()`` wires routes + dependencies and returns a FastAPI instance.
+``app`` is a module-level instance for ``uvicorn wake.api.app:app``.
 
 The foundation slice provides the storage layer; this factory only depends on
-ABC interfaces.
+ABC interfaces. Phase 2 swapped the hardcoded ``AnthropicHarness`` for an
+``AdapterRegistry`` + ``SessionDispatcher`` pair — the API is otherwise
+unchanged.
 """
 
 from __future__ import annotations
@@ -26,9 +28,10 @@ from wake.api.routes import sessions as sessions_routes
 from wake.api.sse import router as sse_router
 
 if TYPE_CHECKING:
+    from wake.adapters.registry import AdapterRegistry
     from wake.core.event_log import EventLog
     from wake.core.session import SessionStateMachine
-    from wake.harness.anthropic import AnthropicHarness
+    from wake.runtime.dispatcher import SessionDispatcher
     from wake.sandbox.base import SandboxAdapter
     from wake.store.base import AgentStore, EnvironmentStore, SessionStore
     from wake.tools.registry import ToolRegistry
@@ -45,7 +48,8 @@ def create_app(
     session_machine: SessionStateMachine | None = None,
     tool_registry: ToolRegistry | None = None,
     sandbox: SandboxAdapter | None = None,
-    harness: AnthropicHarness | None = None,
+    adapter_registry: AdapterRegistry | None = None,
+    dispatcher: SessionDispatcher | None = None,
 ) -> FastAPI:
     """Build a FastAPI app wired with the provided wake components.
 
@@ -58,7 +62,6 @@ def create_app(
         logger.info("wake_api_starting", version=__version__)
         yield
         logger.info("wake_api_shutting_down")
-        # Best-effort: tear down any sandbox handles
         state: AppState = app.state.wake
         if state.sandbox is not None:
             for handle in list(state.sandbox_handles.values()):
@@ -83,7 +86,8 @@ def create_app(
         session_machine=session_machine,
         tool_registry=tool_registry,
         sandbox=sandbox,
-        harness=harness,
+        adapter_registry=adapter_registry,
+        dispatcher=dispatcher,
     )
 
     @app.get("/health", tags=["health"])
@@ -100,7 +104,13 @@ def create_app(
                 "session_machine": state.session_machine is not None,
                 "tool_registry": state.tool_registry is not None,
                 "sandbox": state.sandbox is not None,
-                "harness": state.harness is not None,
+                "adapter_registry": state.adapter_registry is not None,
+                "dispatcher": state.dispatcher is not None,
+                "adapters": (
+                    state.adapter_registry.names()
+                    if state.adapter_registry is not None
+                    else []
+                ),
             },
         }
 
@@ -113,6 +123,6 @@ def create_app(
     return app
 
 
-# Module-level app for `uvicorn wake.api.app:app`.
-# Components are wired by the CLI / launcher before requests hit the API.
+# Module-level app for ``uvicorn wake.api.app:app``. Components are wired
+# by the CLI / launcher before requests hit the API.
 app = create_app()

@@ -1,7 +1,7 @@
 # ruff: noqa: B008, TC001, SIM105
 """Session events routes.
 
-POST /v1/sessions/{id}/events   append an event (typically user.message); kicks the harness
+POST /v1/sessions/{id}/events   append an event (typically user.message); kicks the dispatcher
 GET  /v1/sessions/{id}/events   list events
 """
 
@@ -70,17 +70,19 @@ async def append_event(
         metadata=body.metadata,
     )
 
-    # If the user just spoke, kick the harness in the background.
+    # If the user just spoke, kick the harness in the background through
+    # the dispatcher. The dispatcher resolves the adapter by name (from
+    # agent metadata or the runtime default) and drives the loop.
     if body.type == "user.message":
         agent = await agent_store.get(session.agent_id, version=session.agent_version)
         if agent is None:
             raise HTTPException(status_code=404, detail="agent not found")
 
         state = get_state(request)
-        if state.harness is None:
-            logger.warning("harness_not_configured", session_id=session_id)
+        if state.dispatcher is None:
+            logger.warning("dispatcher_not_configured", session_id=session_id)
         else:
-            background.add_task(_run_harness_safely, request, session_id, agent.id)
+            background.add_task(_run_dispatcher_safely, request, session_id, agent.id)
 
     return event
 
@@ -95,10 +97,16 @@ async def list_events(
     return EventList(data=events)
 
 
-async def _run_harness_safely(request: Request, session_id: str, agent_id: str) -> None:
-    """Background task to drive the harness for a session."""
+async def _run_dispatcher_safely(
+    request: Request, session_id: str, agent_id: str
+) -> None:
+    """Background task: drive the configured adapter for a session."""
     state = get_state(request)
-    if state.harness is None or state.session_machine is None or state.agent_store is None:
+    if (
+        state.dispatcher is None
+        or state.session_machine is None
+        or state.agent_store is None
+    ):
         return
 
     sess = await state.session_machine.get(session_id)
@@ -108,7 +116,6 @@ async def _run_harness_safely(request: Request, session_id: str, agent_id: str) 
     if agent is None:
         return
 
-    # Acquire / refresh sandbox handle if any tool requires it.
     sandbox_handle = state.sandbox_handles.get(session_id)
 
     try:
@@ -118,13 +125,13 @@ async def _run_harness_safely(request: Request, session_id: str, agent_id: str) 
         pass
 
     try:
-        await state.harness.run_step(sess, agent, sandbox_handle=sandbox_handle)  # type: ignore[arg-type]
+        await state.dispatcher.run_step(sess, agent, sandbox_handle=sandbox_handle)  # type: ignore[arg-type]
         await state.session_machine.complete(session_id)
     except asyncio.CancelledError:
         await state.session_machine.fail(session_id, "cancelled", transient=False)
         raise
     except Exception as e:  # noqa: BLE001
-        logger.exception("harness_step_failed", session_id=session_id)
+        logger.exception("dispatcher_step_failed", session_id=session_id)
         if state.event_log is not None:
             await state.event_log.append(
                 session_id,
