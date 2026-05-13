@@ -11,8 +11,7 @@ if (typeof globalThis.ResizeObserver === "undefined") {
     unobserve(): void {}
     disconnect(): void {}
   }
-  // @ts-expect-error - assign global polyfill
-  globalThis.ResizeObserver = ResizeObserverPoly;
+  (globalThis as { ResizeObserver: unknown }).ResizeObserver = ResizeObserverPoly;
 }
 
 // happy-dom doesn't seed innerWidth/innerHeight either; Recharts uses
