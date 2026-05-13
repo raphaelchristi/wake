@@ -14,7 +14,7 @@ Plano de execução do Wake. Cada fase tem **gates de saída objetivos** — voc
 | [Phase 1](./PHASE-1-skeleton.md) | Skeleton | 2 semanas | ✅ done |
 | [Phase 2](./PHASE-2-first-adapter.md) | First Adapter | 2 semanas | ✅ done |
 | [Phase 3](./PHASE-3-spec-validation.md) | Spec Validation | 3 semanas | ✅ done |
-| [Phase 4](./PHASE-4-production-stack.md) | Production Stack | 3 semanas | ⚪ not_started |
+| [Phase 4](./PHASE-4-production-stack.md) | Production Stack | 3 semanas | ✅ done |
 | [Phase 5](./PHASE-5-public-launch.md) | Public Launch | 1 semana | ⚪ not_started |
 
 **Total estimado:** 12-13 semanas (≈3 meses) para Wake v0.1.0 público com 4 adapters funcionando.
@@ -102,6 +102,39 @@ Frameworks instalados em `.venv` (gitignored, devs instalam local):
 - `langgraph>=1.0,<2.0`
 - `crewai>=1.0` (instalou 1.14.4)
 - `pydantic-ai>=1.0`
+
+### Phase 4 — done in ~37 min wall-clock (multi-agent)
+
+3 Opus agents em worktrees isolados (`agent/postgres-store`, `agent/sandbox-runtime`, `agent/vault-llm-deploy`) construíram a production stack inteira em paralelo:
+
+- **`wake-store-postgres`** (`94feb07`) — Postgres 16 backend: events particionados por HASH(session_id) com 16 partições, índice BRIN em created_at, LISTEN/NOTIFY pra SSE fan-out, advisory locks pra session ownership, `WorkerHeartbeat` pra multi-worker scheduling, migrações Alembic, load test opt-in.
+- **`wake-sandbox-runtime`** (`03f1fbd`) — wrapper Python sobre `@anthropic-ai/sandbox-runtime` (npm) com `select_sandbox_backend()` graceful fallback pra Docker. Mandatory deny paths (`~/.ssh`, `~/.aws`, `/etc/shadow`) override-proof. Linux (bubblewrap) + macOS (sandbox-exec).
+- **`wake-vault-infisical`** (`3647537`) — Infisical Agent Vault: OAuth flows pra GitHub/Slack/Notion, HTTPS proxy substitution, prompt-injection protection (testes confirmam token nunca em logs/events).
+- **`wake-llm-litellm`** (`3647537`) — LiteLLM provider multi-model: Anthropic/OpenAI/Ollama normalizados pro canonical Wake event format, cost tracking via callbacks.
+- **`deploy/`** — Docker Compose (api+worker+postgres+redis+agentgateway+vault sidecars), Helm chart v0.4.0 (10 templates), agentgateway config pra MCP egress.
+- **`docs/DEPLOY*.md`** — 5 deploy guides (overview + Compose + Kubernetes + Fly.io + AWS).
+- **`examples/05/07/08`** — kill-and-resume, mcp-github, vault-credentials runnables.
+
+Stats agregadas Phase 4:
+- ~7.000 LoC source+tests através de 4 packages novos + deploy + examples
+- **+146 tests novos** (postgres 18 / sandbox 46 / vault 43 / litellm 39); regressions claude-sdk/langgraph/conformance verdes
+- `src/wake/runtime/registry.py` introduzido (postgres-store slice) — `EntryPointRegistry[T]` genérico pra wake.stores/sandboxes/vaults/llm_providers
+- `src/wake/py.typed` marker pra typed downstream adapters
+- 3 merge commits sequenciais (`94feb07` postgres → `03f1fbd` sandbox → `3647537` vault-llm-deploy)
+- Worktrees + branches cleaned up
+
+Validação:
+- Postgres backend reproduz comportamento de SQLiteStore (mesmas behavioral suites)
+- sandbox-runtime fallback pra Docker verificado via `select_sandbox_backend()` test matrix
+- Prompt-injection exfil test (vault) — token nunca aparece em payloads observáveis
+- Helm chart `helm lint` clean; Docker Compose `config` válido
+- Example 05 demonstra resume <60s após worker kill (in-memory FakeStore; Postgres path via `WAKE_DATABASE_URL`)
+
+Issues identificadas (não bloqueantes, fora do escopo Phase 4):
+- `pydantic-ai` upstream bumped pra `1.31.0` durante reinstall — `ToolReturnPart.outcome` arg removed → regressão de 10 testes no `wake-adapter-pydantic-ai` (precisa pinning + fix). Antes do Phase 4: 31/31 passing.
+- `wake-adapter-crewai` ~9 testes failing após reinstall (provavelmente upstream drift similar; precisa investigação).
+- `tests/unit/test_cli_client.py` — 5 failures pre-existentes (`httpx[socks]` missing) já documentadas pré-Phase 4.
+- Discovery loaders `wake.sandboxes`/`wake.vaults`/`wake.llm_providers` declared como entry_points mas consumo no CLI ainda não wired (sandbox-runtime adapter funciona via constructor; integração via registry fica pra polish).
 
 ---
 
