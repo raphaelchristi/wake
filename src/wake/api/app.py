@@ -12,20 +12,27 @@ unchanged.
 
 from __future__ import annotations
 
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
 import structlog
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from wake import __version__
-from wake.api.dependencies import AppState
+from wake.api.dependencies import AppState, verify_api_key
 from wake.api.routes import agents as agents_routes
 from wake.api.routes import environments as environments_routes
 from wake.api.routes import events as events_routes
 from wake.api.routes import sessions as sessions_routes
 from wake.api.sse import router as sse_router
+
+#: Env var consulted for CORS origin allowlist (comma-separated).
+WAKE_CORS_ENV = "WAKE_API_CORS_ORIGINS"
+#: Routes that do not require an API key (health/discovery).
+_AUTH_EXEMPT_PATHS = ("/health", "/docs", "/redoc", "/openapi.json")
 
 if TYPE_CHECKING:
     from wake.adapters.registry import AdapterRegistry
@@ -78,6 +85,24 @@ def create_app(
         lifespan=lifespan,
     )
 
+    # CORS — the Wake Dashboard runs on :3000 in dev and at a configurable
+    # origin in production. ``WAKE_API_CORS_ORIGINS`` accepts a comma-separated
+    # list; the default permits the dashboard's dev server only.
+    cors_env = os.environ.get(WAKE_CORS_ENV, "").strip()
+    allow_origins = (
+        [o.strip() for o in cors_env.split(",") if o.strip()]
+        if cors_env
+        else ["http://localhost:3000", "http://127.0.0.1:3000"]
+    )
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=allow_origins,
+        allow_methods=["*"],
+        allow_headers=["*"],
+        allow_credentials=False,
+        expose_headers=["X-Wake-API-Key"],
+    )
+
     app.state.wake = AppState(
         agent_store=agent_store,
         environment_store=environment_store,
@@ -114,11 +139,15 @@ def create_app(
             },
         }
 
-    app.include_router(agents_routes.router)
-    app.include_router(environments_routes.router)
-    app.include_router(sessions_routes.router)
-    app.include_router(events_routes.router)
-    app.include_router(sse_router)
+    # Auth dependency is wired here so the legacy /health, /docs, /redoc and
+    # /openapi.json surfaces remain unauthenticated. Per-router opt-in lets
+    # future slices (replay, metrics, vault) inherit auth without re-wiring.
+    auth_dep = [Depends(verify_api_key)]
+    app.include_router(agents_routes.router, dependencies=auth_dep)
+    app.include_router(environments_routes.router, dependencies=auth_dep)
+    app.include_router(sessions_routes.router, dependencies=auth_dep)
+    app.include_router(events_routes.router, dependencies=auth_dep)
+    app.include_router(sse_router, dependencies=auth_dep)
 
     return app
 
