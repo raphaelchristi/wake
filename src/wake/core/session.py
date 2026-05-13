@@ -110,7 +110,18 @@ class SessionService:
         log.info("session.created", session_id=session.id, agent_id=agent_id)
         return session
 
-    async def get(self, session_id: str) -> Session:
+    async def get(self, session_id: str) -> Session | None:
+        """Return the session by id, or None if not found.
+
+        Convention follows SessionStore.get — callers that require existence
+        should check the result. The state-machine methods below (start,
+        terminate, etc.) raise InvalidTransitionError if asked to operate on
+        a missing session.
+        """
+        return await self._store.get(session_id)
+
+    async def require(self, session_id: str) -> Session:
+        """Fetch the session by id or raise InvalidTransitionError if missing."""
         s = await self._store.get(session_id)
         if s is None:
             raise InvalidTransitionError(f"session {session_id!r} not found")
@@ -185,7 +196,7 @@ class SessionService:
         reason: str | None,
         idempotent: bool = False,
     ) -> Session:
-        current = await self.get(session_id)
+        current = await self.require(session_id)
         if current.status == target:
             if idempotent:
                 # No-op (don't emit duplicate status events).
@@ -233,3 +244,9 @@ _FSM_EVENTS: Final[dict[tuple[SessionStatus, SessionStatus], str]] = {
     ("running", "terminated"): "terminate",
     ("rescheduling", "terminated"): "terminate",
 }
+
+
+# Compatibility alias: runtime slice was written against the SessionStateMachine
+# name (per PHASE-1-CONTRACT.md). Foundation chose SessionService; keep both
+# names pointing at the same class for backward compatibility.
+SessionStateMachine = SessionService

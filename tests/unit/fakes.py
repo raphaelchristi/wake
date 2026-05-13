@@ -71,13 +71,29 @@ class InMemoryEventStore(EventStore):
                     return e
         return None
 
-    async def subscribe(self, session_id: str) -> AsyncIterator[Event]:
+    async def subscribe(
+        self, session_id: str, since: int = 0
+    ) -> AsyncIterator[Event]:
+        # Match foundation's pattern: outer coroutine returns the inner
+        # async generator instance, so callers can `await store.subscribe(...)`
+        # to obtain the iterator.
+        return self._subscribe_impl(session_id, since)
+
+    async def _subscribe_impl(
+        self, session_id: str, since: int
+    ) -> AsyncIterator[Event]:
+        # First, replay any existing events from the requested seq onwards.
+        for ev in self._events.get(session_id, []):
+            if ev.seq >= since:
+                yield ev
+        # Then subscribe to live events.
         q: asyncio.Queue[Event] = asyncio.Queue()
         self._subscribers.setdefault(session_id, []).append(q)
         try:
             while True:
                 ev = await q.get()
-                yield ev
+                if ev.seq >= since:
+                    yield ev
         finally:
             self._subscribers[session_id].remove(q)
 
@@ -243,6 +259,24 @@ class InMemorySessionStore(SessionStore):
             raise KeyError(id)
         data = sess.model_dump()
         data.update({k: v for k, v in changes.items() if v is not None})
+        data["updated_at"] = _now()
+        new = Session.model_validate(data)
+        self._sessions[id] = new
+        return new
+
+    async def set_container(
+        self,
+        id: str,
+        container_id: str | None,
+        workspace_path: str | None = None,
+    ) -> Session:
+        sess = self._sessions.get(id)
+        if sess is None:
+            raise KeyError(id)
+        data = sess.model_dump()
+        data["container_id"] = container_id
+        if workspace_path is not None:
+            data["workspace_path"] = workspace_path
         data["updated_at"] = _now()
         new = Session.model_validate(data)
         self._sessions[id] = new

@@ -95,7 +95,8 @@ async def stream_session(
 
         async def _pump() -> None:
             try:
-                async for ev in event_log.subscribe(session_id):
+                subscription = await event_log.subscribe(session_id)
+                async for ev in subscription:
                     if ev.seq < cursor:
                         continue
                     await queue.put(ev)

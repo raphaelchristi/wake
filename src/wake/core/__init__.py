@@ -16,10 +16,14 @@ from wake.core.session import (
     SessionService,
 )
 
+# Compatibility alias: runtime slice was written against SessionStateMachine name.
+SessionStateMachine = SessionService
+
 __all__ = [
     "AgentService",
     "EnvironmentService",
     "EventLog",
     "SessionService",
+    "SessionStateMachine",
     "InvalidTransitionError",
 ]

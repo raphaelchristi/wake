@@ -33,7 +33,7 @@ async def app_components() -> dict[str, Any]:
     agent_store = InMemoryAgentStore()
     environment_store = InMemoryEnvironmentStore()
     event_log = EventLog(event_store)
-    session_machine = SessionStateMachine(session_store, event_store)
+    session_machine = SessionStateMachine(session_store, event_log)
     tool_registry = ToolRegistry()
 
     return {

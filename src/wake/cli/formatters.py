@@ -13,13 +13,15 @@ events may not yet carry every field — so missing keys never raise.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from rich.console import Console
 from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 console = Console()
 """Shared console — one instance per CLI invocation."""
@@ -248,9 +250,7 @@ def render_run_event(event: dict[str, Any]) -> bool:
 
     if event_type == "status":
         new_status = payload.get("status") or payload.get("to")
-        if new_status == "terminated":
-            return True
-        return False
+        return new_status == "terminated"
 
     return False
 

@@ -25,11 +25,13 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import AsyncIterator, Iterable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urljoin
 
 import httpx
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator, Iterable
 
 DEFAULT_SERVER = "http://localhost:8080"
 """Fallback Wake server URL when ``WAKE_SERVER`` is unset."""
@@ -316,8 +318,10 @@ async def stream_events(
     headers = {"Accept": "text/event-stream"}
     if last_event_id:
         headers["Last-Event-ID"] = last_event_id
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        async with client.stream("GET", url, headers=headers) as response:
+    async with (
+        httpx.AsyncClient(timeout=timeout) as client,
+        client.stream("GET", url, headers=headers) as response,
+    ):
             if response.status_code >= 400:
                 body = await response.aread()
                 raise WakeAPIError(response.status_code, body.decode("utf-8", "replace"))

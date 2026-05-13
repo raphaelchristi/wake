@@ -140,10 +140,15 @@ async def test_set_container_persists(services) -> None:
     assert updated.workspace_path == "/work"
 
 
-async def test_get_missing_raises(services) -> None:
+async def test_get_missing_returns_none(services) -> None:
+    svc, _, _ = services
+    assert await svc.get("nope") is None
+
+
+async def test_require_missing_raises(services) -> None:
     svc, _, _ = services
     with pytest.raises(InvalidTransitionError):
-        await svc.get("nope")
+        await svc.require("nope")
 
 
 async def test_list_filter(services) -> None:
@@ -161,5 +166,6 @@ async def test_delete(services) -> None:
     svc, _, _ = services
     s = await svc.create(agent_id="ag", agent_version=1)
     await svc.delete(s.id)
+    assert await svc.get(s.id) is None
     with pytest.raises(InvalidTransitionError):
-        await svc.get(s.id)
+        await svc.require(s.id)

@@ -30,8 +30,7 @@ import signal
 import subprocess
 import sys
 import time
-from pathlib import Path
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 import typer
 
@@ -48,6 +47,9 @@ from wake.cli.formatters import (
     render_run_event,
     render_sessions,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Top-level app

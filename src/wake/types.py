@@ -8,7 +8,7 @@ Schema matches `docs/SPEC-EVENT-SCHEMA.md` v0.1.0.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime  # noqa: TC003 — runtime needed by pydantic validation
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
