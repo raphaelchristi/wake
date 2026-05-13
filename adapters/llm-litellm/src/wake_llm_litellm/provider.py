@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import structlog
 
@@ -13,9 +13,6 @@ from wake_llm_litellm.base import (
 )
 from wake_llm_litellm.cost_tracking import install_litellm_callback
 from wake_llm_litellm.normalize import normalize_response
-
-if TYPE_CHECKING:
-    pass
 
 logger = structlog.get_logger(__name__)
 
@@ -68,7 +65,7 @@ class LiteLLMProvider(LLMProvider):
         fn = self._completion_fn
         if fn is None:
             try:
-                import litellm  # type: ignore[import-not-found]
+                import litellm
             except ImportError as exc:  # pragma: no cover — hard dep
                 raise LLMProviderError(
                     "litellm is not installed; install wake-llm-litellm or pass a custom completion_fn"
@@ -81,11 +78,11 @@ class LiteLLMProvider(LLMProvider):
         # Anthropic-style system → litellm: pass as separate kwarg; for
         # OpenAI providers litellm folds it into a system message itself.
         call_messages = list(messages)
-        if system:
-            # If the caller already provided a system message at index 0
-            # we leave their version; otherwise prepend.
-            if not call_messages or call_messages[0].get("role") != "system":
-                call_messages = [{"role": "system", "content": system}, *call_messages]
+        # If the caller already provided a system message at index 0 we leave their
+        # version; otherwise prepend the fallback. (Combined into one condition for
+        # ruff SIM102.)
+        if system and (not call_messages or call_messages[0].get("role") != "system"):
+            call_messages = [{"role": "system", "content": system}, *call_messages]
         call_kwargs["messages"] = call_messages
         call_kwargs["max_tokens"] = max_tokens
         if tools:

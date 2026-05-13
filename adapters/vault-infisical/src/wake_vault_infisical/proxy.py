@@ -65,7 +65,7 @@ class ProxyConfig:
     substitution_enabled: bool = True
 
 
-class EgressDenied(Exception):
+class EgressDenied(Exception):  # noqa: N818 — public API name; tests assert on this
     """Raised when a request targets a host outside ``allowed_hosts``.
 
     The exception type is what unit tests assert on — production code

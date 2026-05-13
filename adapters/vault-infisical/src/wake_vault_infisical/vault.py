@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import os
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from uuid import uuid4
 
 import httpx
@@ -27,9 +27,6 @@ from wake_vault_infisical.base import (
     VaultError,
     VaultNotFoundError,
 )
-
-if TYPE_CHECKING:
-    pass
 
 logger = structlog.get_logger(__name__)
 
@@ -223,7 +220,7 @@ class InfisicalVault(VaultAdapter):
         assert self._http is not None
         try:
             resp = await self._http.post(
-                f"/api/v3/proxy-tokens",
+                "/api/v3/proxy-tokens",
                 json={"vault_id": vault_id, "session_id": session_id},
             )
             resp.raise_for_status()

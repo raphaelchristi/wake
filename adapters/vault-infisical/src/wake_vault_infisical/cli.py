@@ -24,7 +24,7 @@ from __future__ import annotations
 import asyncio
 import os
 import webbrowser
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 
@@ -37,7 +37,7 @@ try:
     from rich.console import Console
     from rich.table import Table
 
-    _console: object | None = Console()
+    _console: Any = Console()
 except ImportError:  # pragma: no cover — typer always pulls rich
     _console = None
     Console = None  # type: ignore[assignment,misc]
@@ -54,7 +54,7 @@ app = typer.Typer(
 def _print(msg: str) -> None:
     """Print via rich if available, else plain stdout. Never prints secrets."""
     if _console is not None:
-        _console.print(msg)  # type: ignore[union-attr]
+        _console.print(msg)
     else:
         print(msg)
 
@@ -156,7 +156,8 @@ def add(
                         "(or OAUTH_CLIENT_ID / OAUTH_CLIENT_SECRET env vars)"
                     )
                 # Validate provider name early.
-                get_provider(provider) if provider != "custom" else None  # type: ignore[func-returns-value]
+                if provider != "custom":
+                    get_provider(provider)
                 flow = OAuthFlow.for_provider(
                     provider if provider != "custom" else "github",
                     client_id=cid,
@@ -166,10 +167,10 @@ def add(
                 url, state = flow.build_authorize_url(scopes=scope_list)
                 _print(f"[dim]opening browser to authorize {provider}…[/dim]")
                 _print(f"[dim]authorize URL:[/dim] {url}")
-                try:
+                import contextlib
+
+                with contextlib.suppress(Exception):  # pragma: no cover — headless CI
                     webbrowser.open(url, new=2)
-                except Exception:  # pragma: no cover — headless CI
-                    pass
                 code = typer.prompt("Paste the ?code=... value from the callback URL")
                 got_state = typer.prompt(
                     "Paste the ?state=... value (for CSRF check)",
@@ -243,7 +244,7 @@ def list_(
                 str(item.provider),
                 ",".join(item.scopes),
             )
-        _console.print(table)  # type: ignore[union-attr]
+        _console.print(table)
 
     asyncio.run(_run())
 

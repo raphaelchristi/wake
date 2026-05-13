@@ -98,7 +98,7 @@ def install_litellm_callback(tracker: CostTracker | None = None) -> None:
     """
     target = tracker if tracker is not None else _GLOBAL_TRACKER
     try:
-        import litellm  # type: ignore[import-not-found]
+        import litellm
     except ImportError:  # pragma: no cover — litellm is a hard dep
         logger.warning("litellm_not_installed_cost_tracking_disabled")
         return

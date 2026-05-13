@@ -15,7 +15,7 @@ over HTTP.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from datetime import datetime
+from datetime import datetime  # noqa: TC003 — runtime needed by pydantic validation
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
