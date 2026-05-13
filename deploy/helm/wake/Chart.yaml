@@ -1,0 +1,22 @@
+apiVersion: v2
+name: wake
+description: Wake — durable runtime substrate for AI agents (production stack).
+type: application
+# Chart SemVer.
+version: 0.4.0
+# App version tracks the Wake API image tag.
+appVersion: "0.4.0"
+home: https://github.com/raphaelchristi/wake
+sources:
+  - https://github.com/raphaelchristi/wake
+maintainers:
+  - name: Wake contributors
+keywords:
+  - ai
+  - agents
+  - claude
+  - mcp
+  - agent-runtime
+icon: https://raw.githubusercontent.com/raphaelchristi/wake/main/docs/img/logo.png
+annotations:
+  category: AI

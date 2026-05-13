@@ -1,0 +1,35 @@
+{{- if .Values.agentgateway.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "wake.fullname" . }}-agentgateway
+  labels:
+    {{- include "wake.labels" . | nindent 4 }}
+    app.kubernetes.io/component: agentgateway
+data:
+  config.yaml: |
+    listen:
+      port: {{ .Values.agentgateway.port }}
+    vault:
+      endpoint: {{ include "wake.vaultUrl" . | quote }}
+      project: wake
+      environment: prod
+    allowed_hosts:
+      {{- range .Values.agentgateway.allowedHosts }}
+      - {{ . | quote }}
+      {{- end }}
+    mcp_routes:
+      {{- range .Values.agentgateway.mcpRoutes }}
+      - name: {{ .name | quote }}
+        upstream: {{ .upstream | quote }}
+        auth:
+          type: bearer
+          vault_ref: {{ .vaultRef | quote }}
+      {{- end }}
+    {{- if .Values.observability.otel.enabled }}
+    telemetry:
+      exporter: otlp
+      endpoint: {{ .Values.observability.otel.endpoint | quote }}
+      service_name: wake-agentgateway
+    {{- end }}
+{{- end }}

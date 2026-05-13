@@ -1,0 +1,75 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "wake-vault-infisical"
+version = "0.1.0"
+description = "Wake VaultAdapter backed by Infisical Agent Vault. OAuth + HTTPS proxy + CLI."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+authors = [
+    { name = "Wake contributors" },
+]
+keywords = ["wake", "wake-vault", "infisical", "oauth", "credentials"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Security",
+]
+dependencies = [
+    "wake-ai>=0.0.1",
+    "infisical-python>=1.0",
+    "requests-oauthlib>=2.0",
+    "typer>=0.12",
+    "httpx>=0.27",
+    "pydantic>=2.9",
+    "structlog>=24.4",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "responses>=0.25",
+    "pytest-mock>=3.14",
+]
+
+[project.entry-points."wake.vaults"]
+infisical = "wake_vault_infisical.vault:create"
+
+[project.entry-points."wake.cli"]
+vault = "wake_vault_infisical.cli:app"
+
+[project.urls]
+Homepage = "https://github.com/raphaelchristi/wake"
+Repository = "https://github.com/raphaelchristi/wake"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/wake_vault_infisical"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-v --strict-markers"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP", "B", "A", "C4", "SIM", "TCH"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_ignores = true
+disallow_untyped_defs = true

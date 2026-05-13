@@ -1,0 +1,67 @@
+# agentgateway — sidecar config for the Wake stack.
+#
+# agentgateway is the L7 egress proxy. It:
+#   1. Filters egress by ``allowed_hosts`` (drops everything else).
+#   2. Substitutes ``{{vault:<name>}}`` placeholders for real secrets
+#      pulled from the colocated Infisical vault, but only after the
+#      allowlist check passes.
+#   3. Routes MCP HTTP calls to the right upstream MCP server with the
+#      right credential injected (declarative routes below).
+#
+# Production deployments should split this into a ConfigMap (Helm
+# template already references it) and mount per-environment overrides.
+
+listen:
+  port: 8888
+
+# Vault-backed substitution. The vault endpoint is reachable via the
+# compose / Kubernetes service name and is **not** exposed externally.
+vault:
+  endpoint: http://infisical-vault:8080
+  project: wake
+  environment: prod
+
+# Default deny — anything not listed under ``allowed_hosts`` is
+# refused with HTTP 403 + an audit log entry.
+allowed_hosts:
+  - api.anthropic.com
+  - api.openai.com
+  - api.github.com
+  - slack.com
+  - api.notion.com
+  - "*.googleapis.com"
+
+# MCP HTTP egress routes. Each route maps an MCP server identifier to
+# an upstream URL + the vault credential the request is allowed to
+# inject. The substitution only happens if the destination matches
+# ``allowed_hosts``.
+mcp_routes:
+  - name: github
+    upstream: https://api.github.com
+    auth:
+      type: bearer
+      vault_ref: github_token
+
+  - name: notion
+    upstream: https://api.notion.com
+    auth:
+      type: bearer
+      vault_ref: notion_token
+
+  - name: slack
+    upstream: https://slack.com/api
+    auth:
+      type: bearer
+      vault_ref: slack_token
+
+# Observability — emit OTLP traces so users can drop in any
+# OpenTelemetry-compatible collector.
+telemetry:
+  exporter: otlp
+  endpoint: ${OTLP_ENDPOINT:-}
+  service_name: wake-agentgateway
+
+# Safety limits.
+limits:
+  max_request_bytes: 4194304   # 4 MiB
+  request_timeout_seconds: 60

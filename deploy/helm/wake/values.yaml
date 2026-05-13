@@ -1,0 +1,198 @@
+# Wake Helm chart values.
+#
+# Every option below has a sensible default; only image tags + secrets
+# typically need overriding for a real deployment.
+
+# ---------------------------------------------------------------------------
+# Image references — set to your registry / tag.
+# ---------------------------------------------------------------------------
+
+image:
+  repository: wake-ai/wake
+  tag: "0.4.0"
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+# Per-component overrides land under api / worker below if you split images.
+
+# ---------------------------------------------------------------------------
+# API tier — handles HTTP + SSE.
+# ---------------------------------------------------------------------------
+
+api:
+  enabled: true
+  replicas: 2
+  image: {}   # override repository / tag here if different from global
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: 1
+      memory: 1Gi
+  service:
+    type: ClusterIP
+    port: 8080
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# ---------------------------------------------------------------------------
+# Worker tier — runs harness sessions; multiple replicas pick from
+# Postgres via advisory locks.
+# ---------------------------------------------------------------------------
+
+worker:
+  enabled: true
+  replicas: 3
+  image: {}
+  concurrency: 4
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: 2
+      memory: 2Gi
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# ---------------------------------------------------------------------------
+# Postgres — event store + advisory locks.
+# Production deployments should use a managed Postgres (RDS, Cloud SQL,
+# Crunchy / Zalando operator). The bundled StatefulSet is dev-grade.
+# ---------------------------------------------------------------------------
+
+postgres:
+  enabled: true       # set false to BYO managed Postgres
+  image:
+    repository: postgres
+    tag: "16"
+  user: wake
+  database: wake
+  # In production, prefer ``existingSecret`` to a plaintext value.
+  password: "wake-dev-password"
+  existingSecret: ""
+  persistence:
+    enabled: true
+    size: 50Gi
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 1
+      memory: 1Gi
+  partitions: 16     # event table HASH partitions
+
+# ---------------------------------------------------------------------------
+# Redis — pub/sub fan-out, lightweight queue.
+# ---------------------------------------------------------------------------
+
+redis:
+  enabled: true
+  image:
+    repository: redis
+    tag: "7-alpine"
+
+# ---------------------------------------------------------------------------
+# agentgateway — egress proxy / MCP routing sidecar.
+# ---------------------------------------------------------------------------
+
+agentgateway:
+  enabled: true
+  image:
+    repository: ghcr.io/agentgateway/agentgateway
+    tag: latest
+  port: 8888
+  allowedHosts:
+    - api.anthropic.com
+    - api.openai.com
+    - api.github.com
+    - slack.com
+    - api.notion.com
+  mcpRoutes:
+    - name: github
+      upstream: https://api.github.com
+      vaultRef: github_token
+
+# ---------------------------------------------------------------------------
+# Infisical vault — credential storage.
+# ---------------------------------------------------------------------------
+
+vault:
+  enabled: true
+  image:
+    repository: infisical/infisical
+    tag: latest
+  # The chart consumes only the *URL* via the API/worker env; tokens
+  # live in a Secret rendered separately.
+  url: ""          # leave empty to use the in-cluster service
+  encryptionKey: ""  # required, generate with `openssl rand -hex 16`
+  authSecret: ""     # required, generate with `openssl rand -base64 32`
+
+# ---------------------------------------------------------------------------
+# Ingress — terminate TLS in front of the API service.
+# ---------------------------------------------------------------------------
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: wake.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+# ---------------------------------------------------------------------------
+# Secrets — model API keys & sensitive env. Reference an existing
+# Secret object to avoid storing plaintext in values.yaml.
+# ---------------------------------------------------------------------------
+
+secrets:
+  anthropicApiKey: ""
+  openaiApiKey: ""
+  existingSecret: ""   # if set, ignores the two fields above
+
+# ---------------------------------------------------------------------------
+# Observability — OTLP exporter, optional.
+# ---------------------------------------------------------------------------
+
+observability:
+  otel:
+    enabled: false
+    endpoint: ""
+    serviceNamePrefix: "wake"
+
+# ---------------------------------------------------------------------------
+# Pod security defaults.
+# ---------------------------------------------------------------------------
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  fsGroup: 10001
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false
+  capabilities:
+    drop: ["ALL"]
+
+# Service account name reuse / creation.
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# ---------------------------------------------------------------------------
+# Naming / labels.
+# ---------------------------------------------------------------------------
+
+nameOverride: ""
+fullnameOverride: ""
+commonLabels: {}
+commonAnnotations: {}

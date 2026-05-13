@@ -1,0 +1,36 @@
+{{- if .Values.agentgateway.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "wake.fullname" . }}-agentgateway
+  labels:
+    {{- include "wake.labels" . | nindent 4 }}
+    app.kubernetes.io/component: agentgateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "wake.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: agentgateway
+  template:
+    metadata:
+      labels:
+        {{- include "wake.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: agentgateway
+    spec:
+      containers:
+        - name: agentgateway
+          image: "{{ .Values.agentgateway.image.repository }}:{{ .Values.agentgateway.image.tag }}"
+          args: ["--config", "/etc/agentgateway/config.yaml"]
+          ports:
+            - name: proxy
+              containerPort: {{ .Values.agentgateway.port }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/agentgateway
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "wake.fullname" . }}-agentgateway
+{{- end }}
