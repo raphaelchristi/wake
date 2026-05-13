@@ -25,6 +25,7 @@ from wake.api.routes import agents as agents_routes
 from wake.api.routes import environments as environments_routes
 from wake.api.routes import events as events_routes
 from wake.api.routes import sessions as sessions_routes
+from wake.api.routes import state as state_routes
 from wake.api.sse import router as sse_router
 
 if TYPE_CHECKING:
@@ -118,6 +119,7 @@ def create_app(
     app.include_router(environments_routes.router)
     app.include_router(sessions_routes.router)
     app.include_router(events_routes.router)
+    app.include_router(state_routes.router)
     app.include_router(sse_router)
 
     return app
