@@ -7,6 +7,7 @@ Command groups
 --------------
 
 * ``server``        — start the Wake API server locally (uvicorn).
+* ``worker``        — run a headless Wake worker (drains sessions).
 * ``agent``         — CRUD on agents.
 * ``environment``   — CRUD on environments.
 * ``session``       — CRUD on sessions + send/stream/events/interrupt.
@@ -201,21 +202,113 @@ def server(
         f"[underline]http://{bind_host}:{port}[/underline]"
     )
     console.print("[dim]press Ctrl+C to stop[/dim]")
+    # We point uvicorn at the async factory in ``wake.api.bootstrap`` so
+    # the module-level ``wake.api.app:app`` (which is intentionally empty
+    # to keep imports cheap) is never used in production. ``--reload``
+    # requires an import string, so we pass the factory through one too.
     try:
         uvicorn.run(  # type: ignore[no-untyped-call]
-            "wake.api.app:app",
+            "wake.api.bootstrap:create_production_app",
             host=bind_host,
             port=port,
             reload=reload,
             log_level="info",
+            factory=True,
         )
     except KeyboardInterrupt:  # pragma: no cover — interactive
         console.print("\n[dim]server stopped[/dim]")
     except ModuleNotFoundError as exc:
         _abort(
             f"Server module not found: {exc.name}. The runtime slice "
-            "(wake.api.app) must be installed alongside the CLI."
+            "(wake.api.bootstrap) must be installed alongside the CLI."
         )
+
+
+# ---------------------------------------------------------------------------
+# `wake worker`
+# ---------------------------------------------------------------------------
+
+
+@app.command()
+def worker(
+    concurrency: Annotated[
+        int,
+        typer.Option(
+            "--concurrency",
+            "-c",
+            min=1,
+            help="Maximum number of sessions to dispatch concurrently per worker.",
+        ),
+    ] = 1,
+    database_url: Annotated[
+        str | None,
+        typer.Option(
+            "--database-url",
+            help="SQLAlchemy DSN. Defaults to $WAKE_DATABASE_URL.",
+            envvar="WAKE_DATABASE_URL",
+            show_envvar=True,
+        ),
+    ] = None,
+    worker_id: Annotated[
+        str | None,
+        typer.Option(
+            "--worker-id",
+            help="Stable worker identifier (defaults to a fresh ULID).",
+        ),
+    ] = None,
+    poll_interval: Annotated[
+        float,
+        typer.Option(
+            "--poll-interval",
+            help="Seconds between store polls when idle.",
+        ),
+    ] = 1.0,
+) -> None:
+    """Run a headless Wake worker.
+
+    The worker connects to the configured store (Postgres in production,
+    SQLite in dev), discovers harness adapters via Python entry points,
+    and drives ``running`` sessions through ``SessionDispatcher.run_step``
+    one step at a time. Multiple workers can run safely against the same
+    Postgres store thanks to ``pg_try_advisory_lock`` claiming.
+
+    Stop the worker with SIGTERM or SIGINT — the loop will drain
+    in-flight sessions before exiting.
+    """
+
+    async def _entrypoint() -> None:
+        from wake.api.bootstrap import build_components
+        from wake.runtime.worker import WakeWorker, install_signal_handlers
+
+        components = await build_components(dsn=database_url)
+        wk = WakeWorker(
+            store=components["store"],
+            dispatcher=components["dispatcher"],
+            concurrency=concurrency,
+            worker_id=worker_id,
+            poll_interval_s=poll_interval,
+        )
+        loop = asyncio.get_running_loop()
+        install_signal_handlers(loop, wk)
+        console.print(
+            f"[bold cyan]wake[/bold cyan] worker "
+            f"[dim]id=[/dim][cyan]{wk.worker_id}[/cyan] "
+            f"[dim]concurrency=[/dim]{concurrency}"
+        )
+        try:
+            await wk.run()
+        finally:
+            close = getattr(components["store"], "close", None)
+            if close is not None:
+                try:
+                    await close()
+                except Exception:  # noqa: BLE001
+                    pass
+
+    try:
+        asyncio.run(_entrypoint())
+    except KeyboardInterrupt:  # pragma: no cover — interactive
+        console.print("\n[dim]worker stopped[/dim]")
 
 
 # ---------------------------------------------------------------------------
