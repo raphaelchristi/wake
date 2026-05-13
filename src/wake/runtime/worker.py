@@ -25,6 +25,7 @@ small and works against either store.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import signal
 from typing import TYPE_CHECKING, Any
@@ -144,7 +145,7 @@ class WakeWorker:
         if url is None:
             return False
         try:
-            backend = url.get_backend_name()
+            backend: str = url.get_backend_name()
         except Exception:  # noqa: BLE001
             return False
         return backend.startswith("postgres")
@@ -187,7 +188,8 @@ class WakeWorker:
         except ImportError:  # pragma: no cover
             return True
         try:
-            return await acquire_session_lock(self._engine, session_id)
+            acquired: bool = await acquire_session_lock(self._engine, session_id)
+            return acquired
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "worker.lock.failed",
@@ -260,10 +262,8 @@ class WakeWorker:
                 self._in_flight.discard(session.id)
             await self._release(session.id)
             if heartbeat is not None:
-                try:
+                with contextlib.suppress(Exception):
                     await heartbeat.stop()
-                except Exception:  # noqa: BLE001
-                    pass
 
     async def _drain_inflight(self) -> None:
         """Wait for all in-flight sessions to complete (best effort)."""
@@ -293,10 +293,10 @@ def install_signal_handlers(loop: asyncio.AbstractEventLoop, worker: WakeWorker)
         loop.create_task(worker.shutdown())
 
     for sig in (signal.SIGTERM, signal.SIGINT):
-        try:
+        # Windows event loops don't implement add_signal_handler; the
+        # caller falls back to default-KeyboardInterrupt behaviour.
+        with contextlib.suppress(NotImplementedError, RuntimeError):
             loop.add_signal_handler(sig, _shutdown)
-        except (NotImplementedError, RuntimeError):  # pragma: no cover - Windows
-            pass
 
 
 __all__ = ["DEFAULT_POLL_INTERVAL_S", "WakeWorker", "install_signal_handlers"]

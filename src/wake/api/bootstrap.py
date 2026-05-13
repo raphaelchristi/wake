@@ -46,7 +46,7 @@ Variable                    Meaning
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import structlog
 
@@ -169,7 +169,9 @@ def build_sandbox(backend: str | None = None) -> SandboxAdapter | None:
             registered=reg.names(),
         )
         return None
-    sb_obj: SandboxAdapter = factory()
+    # Registry holds untyped factories; we trust the entry-point group
+    # contract and cast back to the SandboxAdapter shape.
+    sb_obj = cast("SandboxAdapter", factory())
     logger.info("bootstrap.sandbox.ready", backend=name)
     return sb_obj
 
@@ -205,7 +207,7 @@ def build_vault(provider: str | None = None) -> object | None:
             )
             return None
         try:
-            v = create_infisical()
+            v: object = create_infisical()
         except Exception as exc:  # noqa: BLE001 - vault init may need creds
             logger.warning("bootstrap.vault.init_failed", error=str(exc))
             return None

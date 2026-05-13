@@ -10,8 +10,7 @@ against the assembled app.
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 import pytest_asyncio
@@ -19,6 +18,9 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from wake.api import bootstrap
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @pytest.fixture(autouse=True)

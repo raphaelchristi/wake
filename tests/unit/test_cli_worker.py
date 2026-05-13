@@ -13,8 +13,7 @@ from typing import Any
 
 import pytest
 
-from wake.runtime.worker import WakeWorker
-
+from wake.runtime.worker import WakeWorker  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Test doubles

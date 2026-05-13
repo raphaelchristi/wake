@@ -298,12 +298,12 @@ def worker(
         try:
             await wk.run()
         finally:
+            import contextlib as _contextlib
+
             close = getattr(components["store"], "close", None)
             if close is not None:
-                try:
+                with _contextlib.suppress(Exception):
                     await close()
-                except Exception:  # noqa: BLE001
-                    pass
 
     try:
         asyncio.run(_entrypoint())
