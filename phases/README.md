@@ -13,7 +13,7 @@ Plano de execução do Wake. Cada fase tem **gates de saída objetivos** — voc
 | [Phase 0](./PHASE-0-design-lock.md) | Design Lock | 1-2 semanas | 🟡 in_progress |
 | [Phase 1](./PHASE-1-skeleton.md) | Skeleton | 2 semanas | ✅ done |
 | [Phase 2](./PHASE-2-first-adapter.md) | First Adapter | 2 semanas | ✅ done |
-| [Phase 3](./PHASE-3-spec-validation.md) | Spec Validation | 3 semanas | ⚪ not_started |
+| [Phase 3](./PHASE-3-spec-validation.md) | Spec Validation | 3 semanas | ✅ done |
 | [Phase 4](./PHASE-4-production-stack.md) | Production Stack | 3 semanas | ⚪ not_started |
 | [Phase 5](./PHASE-5-public-launch.md) | Public Launch | 1 semana | ⚪ not_started |
 
@@ -62,6 +62,30 @@ Validação keystone:
 - `ClaudeSDKAdapter` é descoberta via entry_point (`adapter_registry.get("claude-sdk")` retorna instância)
 - Implementa Protocol HarnessAdapter (verificado por `isinstance` + mypy)
 - Roda contra conformance suite (7/10 com mock simples — gaps são scenarios que precisam mock LLM completo; cobertos via test_adapter.py com mocks específicos)
+
+### Phase 3 — done in ~70 min wall-clock (multi-agent)
+
+3 Opus agents em worktrees isolados implementaram adapters REAIS para 3 frameworks com paradigmas distintos:
+
+- **`wake-adapter-langgraph`** (`31bb22b`) — graph-based: StateGraph, ToolNode, create_react_agent, astream. 42 tests. **Conformance 10/10.**
+- **`wake-adapter-crewai`** (`9e92e6c`) — role-based: Crew, Agent, Task, callbacks. 37 tests. **Conformance 10/10.**
+- **`wake-adapter-pydantic-ai`** (`3264be7`) — type-safe: typed Agent, FunctionToolset, streaming. 31 tests. **Conformance 10/10.**
+
+Stats agregadas Phase 3:
+- ~4.000 LoC adapter+tests através de 3 packages novos
+- **329 tests total** no projeto (subiu de 229 Phase 2 → 329 Phase 3)
+- Branches merged em main (`6248102` triple-merge)
+- Worktrees + branches cleaned up
+
+Validação da tese:
+- A HarnessAdapter ABI v0.1.0 funciona em paradigmas radicalmente diferentes (graph / role / type) — sem mudança no Protocol
+- Conformance suite catch comportamento problemático em todos os 3 (e os 3 passam após implementação correta)
+- Pattern do claude-sdk adapter (referência) escala para outros frameworks sem retrabalho da spec
+
+Frameworks instalados em `.venv` (gitignored, devs instalam local):
+- `langgraph>=1.0,<2.0`
+- `crewai>=1.0` (instalou 1.14.4)
+- `pydantic-ai>=1.0`
 
 ---
 
