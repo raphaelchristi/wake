@@ -8,6 +8,7 @@ out/
 build/
 dist/
 next-env.d.ts
+.next-env.d.ts
 
 # tests
 coverage/
@@ -17,6 +18,9 @@ test-results/
 
 # storybook
 storybook-static/
+
+# vercel
+.vercel
 
 # logs
 *.log

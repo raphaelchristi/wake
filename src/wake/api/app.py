@@ -26,8 +26,10 @@ from wake.api.dependencies import AppState, verify_api_key
 from wake.api.routes import agents as agents_routes
 from wake.api.routes import environments as environments_routes
 from wake.api.routes import events as events_routes
+from wake.api.routes import metrics as metrics_routes
 from wake.api.routes import sessions as sessions_routes
 from wake.api.routes import state as state_routes
+from wake.api.routes import vault as vault_routes
 from wake.api.sse import router as sse_router
 
 #: Env var consulted for CORS origin allowlist (comma-separated).
@@ -58,6 +60,8 @@ def create_app(
     sandbox: SandboxAdapter | None = None,
     adapter_registry: AdapterRegistry | None = None,
     dispatcher: SessionDispatcher | None = None,
+    vault: object | None = None,
+    oauth_clients: dict[str, dict[str, str]] | None = None,
 ) -> FastAPI:
     """Build a FastAPI app wired with the provided wake components.
 
@@ -114,6 +118,8 @@ def create_app(
         sandbox=sandbox,
         adapter_registry=adapter_registry,
         dispatcher=dispatcher,
+        vault=vault,
+        oauth_clients=oauth_clients or {},
     )
 
     @app.get("/health", tags=["health"])
@@ -142,13 +148,15 @@ def create_app(
 
     # Auth dependency is wired here so the legacy /health, /docs, /redoc and
     # /openapi.json surfaces remain unauthenticated. Per-router opt-in lets
-    # future slices (metrics, vault) inherit auth without re-wiring.
+    # all slices (sessions, replay, metrics, vault) inherit auth uniformly.
     auth_dep = [Depends(verify_api_key)]
     app.include_router(agents_routes.router, dependencies=auth_dep)
     app.include_router(environments_routes.router, dependencies=auth_dep)
     app.include_router(sessions_routes.router, dependencies=auth_dep)
     app.include_router(events_routes.router, dependencies=auth_dep)
     app.include_router(state_routes.router, dependencies=auth_dep)
+    app.include_router(metrics_routes.router, dependencies=auth_dep)
+    app.include_router(vault_routes.router, dependencies=auth_dep)
     app.include_router(sse_router, dependencies=auth_dep)
 
     return app

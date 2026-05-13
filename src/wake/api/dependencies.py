@@ -39,6 +39,21 @@ class AppState:
     dispatcher: SessionDispatcher | None = None
     # In-memory map of session_id → sandbox handle (single-process)
     sandbox_handles: dict[str, object] = field(default_factory=dict)
+    # Phase 5 metrics-vault slice. ``vault`` is typed loosely (``object``)
+    # so we don't take a hard dep on the wake_vault_infisical adapter
+    # package at import time. Vault routes verify the duck-typed surface
+    # at call time and return 503 when missing.
+    vault: object | None = None
+    # OAuth client config keyed by provider name. Populated from env
+    # vars (``WAKE_OAUTH_<PROVIDER>_CLIENT_ID/SECRET/REDIRECT_URI``) at
+    # startup by ``create_app`` callers.
+    oauth_clients: dict[str, dict[str, str]] = field(default_factory=dict)
+    # In-memory audit log (single-process). Postgres-backed stores
+    # supersede this in production.
+    vault_audit: list[dict[str, object]] = field(default_factory=list)
+    # OAuth ``state`` → ``flow`` map for callback verification. Cleared
+    # when the matching callback completes (or on TTL).
+    oauth_flows: dict[str, object] = field(default_factory=dict)
 
 
 def get_state(request: Request) -> AppState:
@@ -94,6 +109,19 @@ def get_dispatcher(request: Request) -> SessionDispatcher:
     s = get_state(request).dispatcher
     if s is None:
         raise HTTPException(status_code=501, detail="dispatcher not configured")
+    return s
+
+
+def get_vault(request: Request) -> object:
+    """Return the configured vault adapter, or raise 503.
+
+    Phase 5: vault routes deliberately return 503 when no vault is wired
+    (NOT 500), so the dashboard can render an "Offline" empty state
+    without surfacing as a backend bug.
+    """
+    s = get_state(request).vault
+    if s is None:
+        raise HTTPException(status_code=503, detail="Vault not configured")
     return s
 
 

@@ -122,5 +122,36 @@ services:
       redis:
         condition: service_healthy
 
+  # Phase 5 — Wake Dashboard (Next.js 15 standalone).
+  # Talks to wake-api over the docker network. The dashboard reads its
+  # backend URL at request time via NEXT_PUBLIC_API_URL; the API key is
+  # injected from the host env (or a .env file at deploy time) and lives
+  # only in the browser's localStorage after login.
+  frontend:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.frontend
+    image: wake-ai/dashboard:0.5.0
+    restart: unless-stopped
+    environment:
+      # The browser hits the API via the public host; in single-host
+      # docker-compose that's usually http://localhost:8080.
+      NEXT_PUBLIC_API_URL: ${WAKE_API_PUBLIC_URL:-http://localhost:8080}
+      # Server-side requests issued by Next.js Route Handlers (e.g. the
+      # OAuth callback proxy) stay on the docker network.
+      WAKE_API_URL: http://wake-api:8080
+      WAKE_API_KEY: ${WAKE_API_KEY:-}
+      NEXT_TELEMETRY_DISABLED: "1"
+    ports:
+      - "3000:3000"
+    depends_on:
+      - wake-api
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 20s
+
 volumes:
   pgdata: {}

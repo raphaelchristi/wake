@@ -49,7 +49,11 @@ coverage.xml
 *.pem
 *.key
 secrets/
-credentials*
+credentials.json
+credentials.yaml
+credentials.yml
+credentials.env
+.credentials*
 
 # Build artifacts
 target/

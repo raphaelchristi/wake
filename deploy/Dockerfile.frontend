@@ -1,0 +1,82 @@
+# Wake Dashboard — Next.js 15 standalone build.
+#
+# Multi-stage to keep the final image small (< 200 MB):
+#   1. deps     — install pnpm packages with --frozen-lockfile
+#   2. builder  — run `pnpm build` (Next.js standalone output)
+#   3. runner   — minimal Node runtime serving the standalone build
+#
+# Build (from repo root):
+#   docker build -f deploy/Dockerfile.frontend -t wake-ai/dashboard:0.5.0 .
+#
+# Run:
+#   docker run --rm -p 3000:3000 \
+#     -e NEXT_PUBLIC_API_URL=http://localhost:8080 \
+#     -e WAKE_API_KEY=<your-key> \
+#     wake-ai/dashboard:0.5.0
+#
+# Notes:
+# * The Next.js config in frontend/next.config.mjs MUST have
+#   `output: 'standalone'`. Without it, `.next/standalone` won't exist
+#   and the COPY in the runner stage will fail.
+# * We don't ship public/ if it's empty — that COPY is conditional via
+#   a no-op fallback (mkdir + copy).
+# * The runner runs as a non-root user (UID 1001).
+
+FROM node:20-alpine AS deps
+WORKDIR /app
+
+# Install pnpm via the official Node 20 base. Use corepack so we don't
+# have to pin a pnpm version in this Dockerfile — pnpm version is set
+# by frontend/package.json's "packageManager" field if present.
+RUN apk add --no-cache libc6-compat \
+    && corepack enable \
+    && corepack prepare pnpm@latest --activate
+
+COPY frontend/package.json frontend/pnpm-lock.yaml* ./
+RUN pnpm install --frozen-lockfile || pnpm install --no-frozen-lockfile
+
+# -----------------------------------------------------------------------------
+
+FROM node:20-alpine AS builder
+WORKDIR /app
+
+RUN apk add --no-cache libc6-compat \
+    && corepack enable \
+    && corepack prepare pnpm@latest --activate
+
+COPY --from=deps /app/node_modules ./node_modules
+COPY frontend/ ./
+
+# Build expects NEXT_TELEMETRY_DISABLED to avoid prompting on first run.
+ENV NEXT_TELEMETRY_DISABLED=1
+RUN pnpm build
+
+# -----------------------------------------------------------------------------
+
+FROM node:20-alpine AS runner
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV PORT=3000
+ENV HOSTNAME=0.0.0.0
+
+# Non-root user.
+RUN addgroup --system --gid 1001 nodejs \
+    && adduser --system --uid 1001 nextjs
+
+# Copy the standalone output + static assets.
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+# Public is optional — create an empty dir if missing so the runtime
+# never trips over `ENOENT: public`.
+RUN mkdir -p /app/public && chown -R nextjs:nodejs /app/public
+COPY --from=builder --chown=nextjs:nodejs /app/public/ /app/public/
+
+USER nextjs
+EXPOSE 3000
+
+HEALTHCHECK --interval=15s --timeout=3s --start-period=15s --retries=3 \
+    CMD wget -qO- http://127.0.0.1:3000/ >/dev/null 2>&1 || exit 1
+
+CMD ["node", "server.js"]
