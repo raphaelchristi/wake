@@ -1,11 +1,13 @@
-"""Wake HarnessAdapter for CrewAI — Phase 2 STUB.
+"""Wake HarnessAdapter for CrewAI.
 
-This package exposes :class:`CrewAIAdapter`, a stub implementation of
-the ``HarnessAdapter`` Protocol. It demonstrates entry-point discovery
-and the ABI surface, but does NOT yet run CrewAI ``Crew`` instances.
+Wraps a CrewAI ``Crew`` (constructed lazily per turn by a user-supplied
+factory) into the Wake :class:`HarnessAdapter` Protocol. CrewAI owns the
+orchestration; this adapter bridges Wake events <-> CrewAI callbacks and
+Wake's ``ToolRegistry`` <-> CrewAI ``BaseTool``s.
 
-A full implementation is planned for Phase 3 (see
-``phases/PHASE-3-spec-validation.md``).
+See :mod:`wake_adapter_crewai.adapter` for the entry point and
+:mod:`wake_adapter_crewai.callbacks` / :mod:`wake_adapter_crewai.tool_bridge`
+for the bridges.
 """
 
 from wake_adapter_crewai.adapter import CrewAIAdapter, create

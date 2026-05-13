@@ -4,19 +4,17 @@ build-backend = "hatchling.build"
 
 [project]
 name = "wake-adapter-crewai"
-# PEP 440 forbids "0.1.0-stub"; the adapter's runtime `version` attribute
-# still reads "0.1.0-stub" — that's the value other tooling reports.
-version = "0.1.0a0"
-description = "Wake HarnessAdapter for CrewAI Crews (Phase 2 stub)."
+version = "0.1.0"
+description = "Wake HarnessAdapter for CrewAI Crews."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
 authors = [
     { name = "Wake contributors" },
 ]
-keywords = ["wake", "crewai", "agents", "adapter", "harness"]
+keywords = ["wake", "wake-adapter", "crewai", "agents", "adapter", "harness"]
 classifiers = [
-    "Development Status :: 2 - Pre-Alpha",
+    "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
@@ -26,6 +24,8 @@ classifiers = [
 ]
 dependencies = [
     "wake-ai>=0.0.1",
+    "crewai>=1.0",
+    "pydantic>=2.9",
     "python-ulid>=3.0",
 ]
 
@@ -33,8 +33,13 @@ dependencies = [
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
+    "wake-test-conformance>=0.1.0",
 ]
 
+# Entry-point discovery: ``AdapterRegistry.discover()`` picks this up.
+# Note: ``create()`` returns an adapter wired to a trivial echo crew so the
+# entry point is callable; real callers construct ``CrewAIAdapter(crew_factory)``
+# directly with their own factory.
 [project.entry-points."wake.adapters"]
 crewai = "wake_adapter_crewai.adapter:create"
 

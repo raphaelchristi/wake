@@ -1,38 +1,49 @@
 # wake-adapter-crewai
 
-> **Phase 2 STUB.** This package proves Wake's `HarnessAdapter` ABI is
-> discoverable and plug-and-play. It does **not** yet run CrewAI
-> `Crew`s. A real implementation lands in Phase 3
-> ([phases/PHASE-3-spec-validation.md](../../phases/PHASE-3-spec-validation.md)).
+> **Phase 3.** Real CrewAI integration on Wake's HarnessAdapter ABI
+> v0.1.0. Passes the full `wake-test-conformance` suite (10/10).
 
-A [Wake](https://github.com/raphaelchristi/wake) `HarnessAdapter`
-that — eventually — will let any
-[CrewAI](https://github.com/crewAIInc/crewAI) `Crew` run on top of
-Wake's durable substrate (event log, sandbox, vault, lifecycle).
+A [Wake](https://github.com/raphaelchristi/wake) `HarnessAdapter` that
+lets any [CrewAI](https://github.com/crewAIInc/crewAI) `Crew` run on top
+of Wake's durable substrate (event log, sandbox, vault, lifecycle).
+Bring your Crew, plug it in, get persistence, replay, audit, and
+permission-aware tools for free.
 
-## What this stub does today
+## What it does
 
-- Registers itself under the `wake.adapters` Python entry point as
-  `crewai`, so `AdapterRegistry.discover()` finds it.
-- Implements the `HarnessAdapter` Protocol (`name`, `version`,
-  `compatibility`, `step()`, `on_lifecycle()`).
-- `step()` emits a single canned `assistant.message` event with text
-  `"stub from crewai"` — independent of input.
-- `on_lifecycle()` is a no-op.
+- Accepts a `crew_factory: Callable[[str], Crew]` (CrewAI Crews are
+  cheap to build, expensive to run — the factory pattern matches
+  CrewAI's idiom of parameterizing Task descriptions by user prompt).
+- On each `step()`, reads the latest `user.message`, asks the factory
+  for a fresh Crew, and drives it via `crew.kickoff()` in a worker
+  thread.
+- Wraps every Wake tool as a CrewAI `BaseTool` whose `_run` funnels
+  through `tools.execute(name, input, tool_use_id=...)` — preserving
+  permission policy, audit logging, and idempotent retry.
+- Hooks CrewAI's `step_callback` and `task_callback` to emit Wake events
+  in real time:
 
-That's the entire feature set. **It is a wiring proof, not a framework
-integration.**
+  | CrewAI signal              | Wake event                                 |
+  | -------------------------- | ------------------------------------------ |
+  | `AgentAction.thought`      | `assistant.thinking` (phase=`action`)      |
+  | `AgentFinish.thought`      | `assistant.thinking` (phase=`finish`)      |
+  | Tool `_run` invocation     | `tool_use` + `tool_result` (correlated id) |
+  | `TaskOutput.raw`           | `assistant.thinking` (phase=`task`)        |
+  | Final `CrewOutput.raw`     | `assistant.message`                        |
+
+- Idempotent on `resume`: if an `assistant.message` already follows the
+  latest `user.message`, `step()` exits without re-running the crew.
 
 ## Install
 
-From the Wake monorepo (editable, recommended while pre-alpha):
+From the Wake monorepo (editable):
 
 ```bash
 cd adapters/crewai
-pip install -e .
+pip install -e ".[dev]"
 ```
 
-From a release wheel (once published):
+From PyPI (once published):
 
 ```bash
 pip install wake-adapter-crewai
@@ -40,28 +51,71 @@ pip install wake-adapter-crewai
 
 ## Use
 
+### Programmatic
+
+```python
+from crewai import Agent, Crew, Task, LLM
+from wake_adapter_crewai import CrewAIAdapter
+
+def build_crew(user_input: str) -> Crew:
+    llm = LLM(model="gpt-4o-mini")
+    researcher = Agent(
+        role="researcher",
+        goal=user_input,
+        backstory="finds reliable information.",
+        llm=llm,
+    )
+    task = Task(
+        description=user_input,
+        expected_output="A short, factual answer.",
+        agent=researcher,
+    )
+    return Crew(agents=[researcher], tasks=[task])
+
+adapter = CrewAIAdapter(build_crew)
+# Hand `adapter` to your Wake runtime as the harness.
+```
+
+### Via entry-point discovery
+
+The package registers itself as `crewai` under the `wake.adapters`
+group:
+
 ```python
 from wake.adapters import AdapterRegistry
 
 registry = AdapterRegistry()
-registry.discover()  # reads the wake.adapters entry-point group
-
+registry.discover()
 adapter = registry.get("crewai")
-assert adapter.name == "crewai"
-assert adapter.version == "0.1.0-stub"
 ```
 
-Or with the Wake CLI (once your runtime is configured to allow stubs):
+The entry-point factory wires a trivial echo crew. Real callers
+construct `CrewAIAdapter(crew_factory)` directly with their own
+factory.
 
-```bash
-wake session create --agent my-agent --harness crewai
+## Multi-agent example (researcher → writer)
+
+CrewAI's value is multi-agent orchestration. The adapter surfaces each
+agent's contribution through the event log:
+
+```python
+def build(user_input: str) -> Crew:
+    researcher = Agent(role="researcher", goal="gather facts", ...)
+    writer = Agent(role="writer", goal="rewrite prose", ...)
+    t1 = Task(description=f"Research: {user_input}", agent=researcher,
+              expected_output="key facts")
+    t2 = Task(description="Turn facts into a blog post.", agent=writer,
+              context=[t1], expected_output="prose")
+    return Crew(agents=[researcher, writer], tasks=[t1, t2])
+
+adapter = CrewAIAdapter(build)
 ```
 
-The runtime will route `step()` calls to this adapter and persist the
-single emitted event — useful for end-to-end smoke tests of the
-adapter dispatch path.
+The event log will contain `assistant.thinking` events with
+`phase="task"` for each task, attributed to the correct agent role,
+then a final `assistant.message` with the writer's output.
 
-## Run the tests
+## Tests
 
 ```bash
 cd adapters/crewai
@@ -69,33 +123,67 @@ pip install -e ".[dev]"
 pytest -v
 ```
 
-Five tests, all fast:
+Coverage:
 
-- package imports
-- runtime `isinstance(adapter, HarnessAdapter)`
-- entry point discovered by `AdapterRegistry`
-- `step()` emits exactly one `assistant.message`
-- `on_lifecycle()` is a no-op for every event
+- `tests/test_adapter.py`   — Protocol conformance, name/version,
+  entry-point discovery.
+- `tests/test_callbacks.py` — Step/task callback event mapping.
+- `tests/test_tool_bridge.py` — Wake tool → CrewAI BaseTool wrapper,
+  input coercion, error handling.
+- `tests/test_simple_crew.py` — Single-agent, single-task end-to-end.
+- `tests/test_multi_agent.py` — Researcher + writer pipeline; task
+  attribution; final message reflects last task.
+- `tests/test_conformance.py` — Full `wake-test-conformance` suite.
 
-## Plan for the full implementation (Phase 3)
+All tests use scripted `FakeLLM` instances; no network is required.
 
-The Phase 3 adapter will:
+## Conformance
 
-1. Accept a ``crew_factory: Callable[[str], Crew]`` via the
-   constructor — CrewAI `Crew`s are usually built per-task, parametrized
-   by the user prompt.
-2. On `step()`, read the latest `user.message`, hand it to
-   `crew_factory`, and call `await crew.kickoff_async()`.
-3. Wire CrewAI's agent/task callbacks (`step_callback`,
-   `task_callback`) to emit Wake events: `assistant.thinking` for
-   agent thoughts, `tool_use`/`tool_result` for tool execution.
-4. Wrap CrewAI `BaseTool` so its `_run`/`_arun` calls route through
-   `tools.execute(name, input, tool_use_id=...)` — never the underlying
-   function directly.
-5. Pass the full `wake-test-conformance` suite (10 scenarios).
+`pytest -v tests/test_conformance.py` runs the canonical
+`wake-test-conformance` suite. Current score: **10/10**.
 
-Track the work in
-[`phases/PHASE-3-spec-validation.md`](../../phases/PHASE-3-spec-validation.md).
+| Scenario          | Status                                                |
+| ----------------- | ------------------------------------------------------ |
+| basic_step        | PASS                                                   |
+| tool_use          | PASS                                                   |
+| streaming         | PASS (warning: non-streaming — CrewAI is non-streaming)|
+| cancellation      | PASS (worker thread joined cleanly on `CancelledError`)|
+| resume            | PASS (idempotent — re-step is a no-op)                 |
+| parallel_tools    | PASS                                                   |
+| error_handling    | PASS                                                   |
+| pause_turn        | PASS (warning: CrewAI does not expose pause_turn)      |
+| lifecycle         | PASS (no-op on_lifecycle)                              |
+| idempotence       | PASS (no duplicate `tool_use_id`s across steps)        |
+
+## Example
+
+```bash
+cd adapters/crewai
+python examples/simple_crew.py
+```
+
+The example builds an in-memory event log, injects one user message,
+and prints every emitted Wake event. To use a real LLM, set
+`CREWAI_REAL_LLM=1` and configure your LiteLLM credentials
+(`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, etc.).
+
+## Design notes
+
+- **Worker thread, not `kickoff_async`.** CrewAI's
+  `kickoff_async` re-enters the sync loop in many cases and gives no
+  meaningful benefit over `asyncio.to_thread(crew.kickoff)`. The latter
+  is simpler and more robust against future CrewAI changes.
+- **Tool dispatch goes through `tools.execute()`.** Even though
+  CrewAI's `BaseTool._run` is synchronous, the adapter spins a private
+  event loop in a worker thread (only when needed) to drive Wake's
+  async `tools.execute()`. The wrapper class converts the result back
+  to a string CrewAI's agent loop can incorporate.
+- **Callbacks run on the worker thread**, but Wake events live on the
+  main loop. We bridge with `loop.call_soon_threadsafe(queue.put_nowait, ev)`.
+- **Final `assistant.message` is emitted by the adapter**, not the task
+  callback. Doing so from the callback races with `kickoff()`
+  completion in multi-task crews; emitting from the adapter guarantees
+  order.
 
 ## License
 
