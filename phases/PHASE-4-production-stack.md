@@ -405,6 +405,120 @@ services:
 
 ---
 
+## Reusable Components
+
+Esta fase é **inteiramente sobre reuso** — substituir componentes "dev-grade" da Phase 1 por componentes maduros do mercado.
+
+### Componentes substituíveis diretamente
+
+| Camada | Phase 1 (dev) | Phase 4 (prod) | License |
+|---|---|---|---|
+| Event store | SQLite | **Postgres 16+** | PostgreSQL |
+| Sandbox | Docker padrão | **[`@anthropic-ai/sandbox-runtime`](https://github.com/anthropic-experimental/sandbox-runtime)** | MIT |
+| LLM provider | `anthropic` SDK direto | **[LiteLLM](https://github.com/BerriAI/litellm)** | MIT |
+| Egress / MCP | direct HTTP | **[agentgateway](https://github.com/agentgateway/agentgateway)** | Apache 2.0 (LF) |
+| Vault | hardcoded env | **[Infisical Agent Vault](https://github.com/Infisical/agent-vault)** | MIT (+ EE) |
+
+### Postgres patterns / libraries
+
+| Lib | Source | License | Uso |
+|---|---|---|---|
+| `asyncpg` | [MagicStack/asyncpg](https://github.com/MagicStack/asyncpg) | Apache 2.0 | Async Postgres driver |
+| `alembic` | [sqlalchemy/alembic](https://github.com/sqlalchemy/alembic) | MIT | Migrations |
+| `sqlalchemy` 2.x | [SQLAlchemy](https://github.com/sqlalchemy/sqlalchemy) | MIT | ORM async |
+| `pgbouncer` | [pgbouncer/pgbouncer](https://github.com/pgbouncer/pgbouncer) | ISC | Connection pooling |
+| LISTEN/NOTIFY pattern | [asyncpg docs](https://magicstack.github.io/asyncpg/current/api/index.html#asyncpg.connection.Connection.add_listener) | Apache 2.0 | SSE fan-out |
+| Particionamento BY HASH | [Postgres docs](https://www.postgresql.org/docs/16/ddl-partitioning.html) | PostgreSQL | events table |
+
+### Sandbox-runtime integration
+
+| Item | Source | Notas |
+|---|---|---|
+| npm package `@anthropic-ai/sandbox-runtime` | [GitHub](https://github.com/anthropic-experimental/sandbox-runtime) | Beta Research Preview |
+| Config schema docs | repo README | usar como reference |
+| macOS sandbox-exec patterns | repo README | platform-specific |
+| Linux bubblewrap setup | repo README + [bubblewrap docs](https://github.com/containers/bubblewrap) | requer kernel config |
+
+**Strategy:** wrap sandbox-runtime via subprocess + JSON config. Não forkar.
+
+### Vault integration
+
+| Item | Source | License | Uso |
+|---|---|---|---|
+| Infisical Agent Vault | [Infisical/agent-vault](https://github.com/Infisical/agent-vault) | MIT | MITM HTTPS proxy + credential injection |
+| Infisical SDK Python | [Infisical SDK](https://infisical.com/docs/sdks/languages/python) | MIT | API client |
+| OAuth flows | [requests-oauthlib](https://github.com/requests/requests-oauthlib) | ISC | OAuth helper |
+
+### LiteLLM integration
+
+| Item | Source | License | Notas |
+|---|---|---|---|
+| `litellm` | [BerriAI/litellm](https://github.com/BerriAI/litellm) | MIT | proxy + lib |
+| Callbacks pattern | [LiteLLM callbacks docs](https://docs.litellm.ai/docs/observability/callbacks) | MIT | cost tracking via callbacks |
+| Tool use translation | LiteLLM docs por provider | MIT | mapping complexo |
+
+### agentgateway integration
+
+| Item | Source | License | Notas |
+|---|---|---|---|
+| `agentgateway` binary | [agentgateway/agentgateway](https://github.com/agentgateway/agentgateway) | Apache 2.0 | Rust, LF hosted |
+| Config schema | repo docs | LF | MCP + A2A + LLM routing |
+| Sidecar pattern | docker-compose recipes | LF | rodar junto ao Wake |
+
+### Observability libs (OpenTelemetry)
+
+| Lib | Source | License | Uso |
+|---|---|---|---|
+| `opentelemetry-api` | [OTel Python](https://github.com/open-telemetry/opentelemetry-python) | Apache 2.0 | tracing API |
+| `opentelemetry-instrumentation-fastapi` | OTel | Apache 2.0 | trace HTTP automatic |
+| `openinference-semantic-conventions` | [Arize OpenInference](https://github.com/Arize-ai/openinference) | Apache 2.0 | LLM/agent semantic conventions |
+
+### Deploy: Helm chart patterns
+
+| Pattern | Source | License | Uso |
+|---|---|---|---|
+| Bitnami chart structure | [bitnami/charts](https://github.com/bitnami/charts) | Apache 2.0 | template de qualidade |
+| Postgres operator | [zalando-postgres-operator](https://github.com/zalando/postgres-operator) | MIT | considerar para clusters grandes |
+| Compose for self-host | [Vendure compose](https://github.com/vendure-ecommerce/vendure) | MIT | template multi-service compose |
+
+### Multi-worker / distributed patterns
+
+| Pattern | Source | Por quê |
+|---|---|---|
+| Advisory locks Postgres | [docs](https://www.postgresql.org/docs/16/explicit-locking.html#ADVISORY-LOCKS) | claim de session ownership |
+| Watchdog heartbeat | OpenHands runtime | exemplo de implementação |
+| Graceful shutdown | uvicorn `--graceful-timeout` | SIGTERM handling |
+
+### Backup / DR (futuro)
+
+| Lib | Source | License | Status |
+|---|---|---|---|
+| `pgbackrest` | [pgbackrest/pgbackrest](https://github.com/pgbackrest/pgbackrest) | MIT | backup Postgres |
+| `wal-g` | [wal-g/wal-g](https://github.com/wal-g/wal-g) | Apache 2.0 | continuous archiving |
+
+### Anti-reuso
+
+- ❌ Vault próprio se Infisical Agent Vault serve
+- ❌ Model router próprio se LiteLLM serve
+- ❌ MCP gateway próprio se agentgateway serve
+- ❌ Tracing custom se OpenTelemetry serve
+- ❌ Helm chart de zero se Bitnami template serve
+
+### Economia estimada com reuso
+
+| Decisão | Economia |
+|---|---|
+| Adotar sandbox-runtime vs reimplementar | 2-4 semanas |
+| Adotar Infisical Agent Vault vs vault próprio | 2-3 semanas |
+| Adotar LiteLLM vs adapter por provider | 1-2 semanas |
+| Adotar agentgateway vs proxy próprio | 1 semana |
+| Adotar OpenTelemetry vs tracing custom | 1 semana |
+| **Total** | **7-11 semanas economizadas em 3 semanas de fase** |
+
+Essa é a fase com maior alavancagem de reuso. Se cumprida com integration ao invés de reimplementação, Wake fica enxuto e maduro de uma vez.
+
+---
+
 ## Riscos e mitigações
 
 ### R4.1 — sandbox-runtime é Beta Research Preview, APIs podem mudar

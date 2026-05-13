@@ -332,6 +332,87 @@ Documentar decisão em `phases/decisions/spec-lock-decision.md`.
 
 ---
 
+## Reusable Components
+
+### Frameworks alvo dos adapters
+
+| Framework | Fonte | License | Versão alvo |
+|---|---|---|---|
+| LangGraph | [langchain-ai/langgraph](https://github.com/langchain-ai/langgraph) | MIT | ≥1.0 |
+| LangChain Core | [langchain-ai/langchain](https://github.com/langchain-ai/langchain) | MIT | ≥0.3 (compat com LangGraph 1.0) |
+| CrewAI | [crewAIInc/crewAI](https://github.com/crewAIInc/crewAI) | MIT | ≥1.0 |
+| Pydantic AI | [pydantic/pydantic-ai](https://github.com/pydantic/pydantic-ai) | MIT | ≥1.0 |
+
+### Docs oficiais a consumir antes de implementar
+
+| Adapter | Doc essencial | Por quê |
+|---|---|---|
+| LangGraph | [How to add custom checkpointer](https://langchain-ai.github.io/langgraph/how-tos/persistence_custom/) | nosso event log é externo |
+| LangGraph | [Streaming](https://langchain-ai.github.io/langgraph/concepts/streaming/) | mapping para Wake delta events |
+| LangGraph | [Tool node](https://langchain-ai.github.io/langgraph/concepts/agentic_concepts/#tools) | injection de Wake tools |
+| CrewAI | [Callbacks](https://docs.crewai.com/concepts/callbacks) | hook events do Crew |
+| CrewAI | [Tools](https://docs.crewai.com/concepts/tools) | wrapping de Wake tools |
+| Pydantic AI | [Agents](https://ai.pydantic.dev/agents/) | run loop |
+| Pydantic AI | [Tools](https://ai.pydantic.dev/tools/) | tool registration |
+| Pydantic AI | [Streaming](https://ai.pydantic.dev/results/#streamed-results) | streaming events |
+
+### Patterns a copiar (sem forkar)
+
+| Pattern | Fonte | Por quê |
+|---|---|---|
+| LangChain message types (HumanMessage, AIMessage, ToolMessage) | `langchain-core` | mapping correto |
+| LangGraph checkpointer interface | `langgraph.checkpoint.base` | comparação |
+| Pydantic AI run context | `pydantic_ai.tools.RunContext` | pattern de context injection |
+| MCP tool conversion | MCP Python SDK | MCP ↔ framework tool conversion |
+
+### Standards externas a considerar adotar
+
+| Standard | Para que | Status |
+|---|---|---|
+| [Open Agent Specification](https://github.com/oracle/agent-spec) | Agent definition format | adoção parcial considerada — substitui nosso YAML |
+| [A2A protocol](https://google.github.io/a2a/) | Agent-to-agent | futuro (multiagent na Day-90+) |
+| MCP Tools | Tool protocol | já first-class |
+
+### Bibliotecas de apoio
+
+| Lib | Source | License | Para que |
+|---|---|---|---|
+| `langgraph-checkpoint-sqlite` | LangChain | MIT | estudo de pattern (não importar) |
+| `langchain-anthropic` | LangChain | MIT | se adapter precisa converter messages |
+| MCP Python SDK | Anthropic | MIT | wrap MCP servers como Wake tools |
+
+### Anti-reuso
+
+- ❌ Forkar código LangGraph/CrewAI no nosso adapter (manter como dep externa, nunca fork)
+- ❌ Reescrever message types do LangChain (importar `langchain-core` no adapter)
+- ❌ Inventar tool wrapper se MCP SDK já serve
+
+### Considerar adotar Open Agent Specification
+
+A spec da Oracle/MS/Google define um formato declarativo de agent (model, prompt, tools, mcp_servers). Se adotarmos, ganhamos:
+
+- Interop com qualquer ferramenta que falar Open Agent Spec
+- Não inventamos formato YAML próprio
+- Industry alignment
+
+Custo:
+- Spec é nova, pode mudar
+- Pode não cobrir 100% dos nossos campos
+
+**Decisão sugerida:** adotar como **input format compatível** (Wake aceita Open Agent Spec) mas manter formato interno próprio. Phase 3 toma decisão final.
+
+### Economia estimada com reuso
+
+| Decisão | Economia |
+|---|---|
+| Estudar docs oficiais antes de codar | 2-3 dias (evita bugs sutis) |
+| Pinar versões certas | 1 dia (evita testes contra moving target) |
+| Adotar Open Agent Spec parcial | 1 dia (não inventar formato) |
+| Importar message types do LangChain | 0.5 dia |
+| **Total** | **4.5-5.5 dias** numa fase de 15 dias |
+
+---
+
 ## Riscos e mitigações
 
 ### R3.1 — LangGraph internal API mudou entre versões

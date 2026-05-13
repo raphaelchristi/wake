@@ -343,6 +343,123 @@ Doc retrospectiva em `phases/retrospective-phase-5.md`.
 
 ---
 
+## Reusable Components
+
+### Docs site
+
+| Opção | Source | License | Quando usar |
+|---|---|---|---|
+| **`mkdocs-material`** | [squidfunk/mkdocs-material](https://github.com/squidfunk/mkdocs-material) | MIT | **Recomendado.** Setup de horas. Tema profissional. |
+| Starlight (Astro) | [withastro/starlight](https://github.com/withastro/starlight) | MIT | Alternativa moderna, JS-based |
+| Docusaurus | [facebook/docusaurus](https://github.com/facebook/docusaurus) | MIT | React-based, mais pesado |
+| Nextra | [shuding/nextra](https://github.com/shuding/nextra) | MIT | Next.js-based |
+
+### Setup patterns a copiar
+
+| Pattern | Fonte | Por quê |
+|---|---|---|
+| **FastAPI docs setup** | [fastapi/fastapi `docs/`](https://github.com/fastapi/fastapi/tree/master/docs) | Referência absoluta. mkdocs-material expert-tier. MIT. |
+| Pydantic docs setup | [pydantic/pydantic `docs/`](https://github.com/pydantic/pydantic/tree/main/docs) | mkdocs-material + plugins ricos. MIT. |
+| LangChain docs | [langchain-ai/langchain-docusaurus](https://github.com/langchain-ai/langchain/tree/master/docs) | Docusaurus pesado, ver se vale |
+| Anthropic docs structure | platform.claude.com | comparação de UX |
+
+### Hosting
+
+| Opção | Custo | Notas |
+|---|---|---|
+| **Cloudflare Pages** | grátis | unlimited bandwidth, build minutes generosos |
+| Vercel | grátis no Hobby | bandwidth limitado |
+| Netlify | grátis básico | bandwidth limitado |
+| GitHub Pages | grátis | mais lento, menos features |
+
+### Deploy CLI
+
+| Tool | Source | License |
+|---|---|---|
+| `wrangler` (Cloudflare) | [cloudflare/wrangler](https://github.com/cloudflare/workers-sdk) | MIT |
+| `mkdocs gh-deploy` | mkdocs | BSD |
+
+### Demo videos
+
+| Tool | License | Para que |
+|---|---|---|
+| **`asciinema`** | GPL 3 | Terminal recording, embedável (preferido) |
+| `vhs` (Charm) | [charmbracelet/vhs](https://github.com/charmbracelet/vhs) | MIT | Scripted terminal GIFs |
+| `terminalizer` | MIT | GIF de terminal |
+| Loom | proprietário | Screen recording (alternativa) |
+
+### Image generation (social previews)
+
+| Tool | License | Para que |
+|---|---|---|
+| `og-image` (Vercel) | MIT | OG images programáticos |
+| Excalidraw (export) | MIT | diagramas a mão |
+| Figma free tier | proprietário | quando precisar de design polido |
+
+### Launch playbooks
+
+| Recurso | Source | Por quê |
+|---|---|---|
+| **"How to launch on HN"** | [Aaron Epstein](https://news.ycombinator.com/showhn.html) regras + diversos posts mortem | timing + título |
+| LangFuse launch retrospective | blog deles | OSS observability launch real |
+| Show HN best practices | [paulgraham essays](http://paulgraham.com/) | clássicos |
+| `OpenSauced` launch guides | [open-sauced/open-sauced](https://github.com/open-sauced/open-sauced) | OSS launch playbook |
+
+### Análise / engagement
+
+| Tool | License | Uso |
+|---|---|---|
+| Plausible | open core | analytics simples sem cookies |
+| Umami | MIT | analytics self-host |
+| star-history.com | free | gráfico de stars |
+| repobeats.axiom.co | free | repo activity badge |
+
+### Comunidade (Discord)
+
+| Setup item | Source | Notas |
+|---|---|---|
+| Carl-bot | free tier | mod automation |
+| MEE6 | free tier | level / role assignment |
+| Discord templates | discordtemplates.com | server template "OSS project" |
+
+### Blog hosting / crosspost
+
+| Plataforma | License | Notas |
+|---|---|---|
+| dev.to | proprietária mas free | OSS-friendly |
+| Hashnode | proprietária | crosspost canonical URL |
+| Medium | proprietária | larger audience |
+| Personal blog | qualquer SSG | crosspost canonical |
+
+### Outreach: contact lists
+
+| Lista | Fonte | Notas |
+|---|---|---|
+| LangChain maintainers | GitHub orgs | Harrison Chase + team |
+| CrewAI core team | GitHub orgs | João Moura |
+| Pydantic AI | GitHub orgs | Samuel Colvin team |
+| MCP community | Discord oficial | |
+| OSS AI influencers | Twitter/X listas próprias | |
+
+### Anti-reuso
+
+- ❌ Tema customizado tipo "from scratch" — mkdocs-material com pequenos overrides é o melhor uso de tempo
+- ❌ Hosting próprio (VPS) — Cloudflare Pages é mais resiliente e grátis
+- ❌ Discord bot custom Day-1 — usar Carl-bot/MEE6
+
+### Economia estimada com reuso
+
+| Decisão | Economia |
+|---|---|
+| `mkdocs-material` vs custom theme | 3-5 dias |
+| Cloudflare Pages vs self-host | 1 dia inicial + manutenção contínua |
+| FastAPI docs structure como template | 1-2 dias |
+| `asciinema` vs video editing tools | 1 dia |
+| Carl-bot vs Discord bot custom | 1-2 dias |
+| **Total** | **7-10 dias economizados em 5-7 dias de fase** (i.e., fase fica viável) |
+
+---
+
 ## Riscos e mitigações
 
 ### R5.1 — Show HN não bate (downvoted, fica fora da front page)

@@ -50,6 +50,35 @@ Cada fase tem seção de riscos com mitigações. Quando o risco se materializar
 
 Estimativas são pessimistas (Hofstadter dobra). Se passar do teto, é sinal pra reavaliar arquitetura, não trabalhar mais horas.
 
+### 6. Audite reuso antes de implementar
+
+Toda fase tem seção `## Reusable Components`. Antes de qualquer task começar, ler essa seção e perguntar:
+
+- **Existe lib madura que faz isso?** → importa.
+- **Existe pattern em projeto referência?** → estuda, adapta.
+- **Existe spec aberta?** → adota em vez de inventar.
+
+Reescrever do zero o que já existe maduro é a forma #1 de queimar tempo em projeto OSS. As fases foram desenhadas assumindo reuso agressivo. Estimativas de duração só fecham se a regra for seguida.
+
+Lista de reuso por fase em cada `PHASE-N-*.md`, seção `## Reusable Components`. Resumo cross-phase de componentes-chave:
+
+| Componente | Phase | Reuso |
+|---|---|---|
+| Anthropic Cookbook tool-use | Phase 1 | pattern oficial |
+| OpenHands V1 EventLog | Phase 1 | estudar antes de codar |
+| `python-statemachine` | Phase 1 | session FSM |
+| `pluggy` | Phase 2 | plugin discovery |
+| ASGI/MCP conformance patterns | Phase 2 | template de spec testing |
+| LangGraph/CrewAI/Pydantic AI docs oficiais | Phase 3 | estudo antes de adapter |
+| Open Agent Specification | Phase 3 | adoção parcial considerada |
+| `sandbox-runtime` (Anthropic) | Phase 4 | sandbox completo, evita 4 semanas |
+| `Infisical Agent Vault` | Phase 4 | vault + proxy completo, evita 3 semanas |
+| `LiteLLM` | Phase 4 | model router, evita 2 semanas |
+| `agentgateway` (Linux Foundation) | Phase 4 | MCP/A2A gateway, evita 1 semana |
+| `mkdocs-material` + FastAPI docs structure | Phase 5 | site pronto em 1 dia |
+| `asciinema` | Phase 5 | demos terminal |
+| Cloudflare Pages | Phase 5 | hosting grátis
+
 ---
 
 ## Dependências entre fases

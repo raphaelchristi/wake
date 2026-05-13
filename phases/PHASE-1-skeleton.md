@@ -306,6 +306,72 @@ Com gif/asciinema gravado.
 
 ---
 
+## Reusable Components
+
+**Crítico:** antes de qualquer task começar, fazer 1 dia de leitura/estudo de:
+
+1. **OpenHands V1 SDK paper** ([arxiv 2511.03690](https://arxiv.org/html/2511.03690v1)) — blueprint arquitetural quase idêntico ao nosso. Ler antes de implementar evita 2-3 redesigns.
+2. **Anthropic Cookbook** — patterns oficiais de agentic loop.
+3. **OpenHands V1 EventLog source** (`OpenHands/OpenHands` no GitHub, MIT) — estudar implementação, não forkar.
+
+### Dependencies de Python a usar diretamente
+
+| Componente | Fonte | License | Para que |
+|---|---|---|---|
+| `fastapi` | [tiangolo/fastapi](https://github.com/fastapi/fastapi) | MIT | API server + Pydantic validation |
+| `uvicorn` | [encode/uvicorn](https://github.com/encode/uvicorn) | BSD | ASGI server |
+| `sse-starlette` | [sysid/sse-starlette](https://github.com/sysid/sse-starlette) | MIT | SSE streaming endpoint |
+| `typer` | [tiangolo/typer](https://github.com/fastapi/typer) | MIT | CLI (mesma família FastAPI) |
+| `sqlalchemy` + `alembic` | [SQLAlchemy](https://github.com/sqlalchemy/sqlalchemy) | MIT | ORM + migrations |
+| `docker` (Python SDK) | [docker-py](https://github.com/docker/docker-py) | Apache 2.0 | container provisioning |
+| `httpx` | [encode/httpx](https://github.com/encode/httpx) | BSD | HTTP client async |
+| `anthropic` | [anthropics/anthropic-sdk-python](https://github.com/anthropics/anthropic-sdk-python) | MIT | Claude API direto |
+| `pydantic` v2 | [pydantic/pydantic](https://github.com/pydantic/pydantic) | MIT | schemas |
+| `python-statemachine` ou `transitions` | [python-statemachine](https://github.com/fgmacedo/python-statemachine) | MIT | Session lifecycle FSM |
+| `ulid-py` | [ulid-py](https://github.com/ahawker/ulid) | Apache 2.0 | Event IDs (ULID) |
+| `pytest-asyncio` | [pytest-asyncio](https://github.com/pytest-dev/pytest-asyncio) | Apache 2.0 | testes async |
+
+### Patterns a estudar (não importar)
+
+| Pattern | Fonte | Por quê estudar |
+|---|---|---|
+| EventLog imutável | OpenHands V1 (`openhands/events/`) | mesmo design |
+| Agent loop tool use | [Anthropic Cookbook tool_use](https://github.com/anthropics/anthropic-cookbook/blob/main/tool_use/) | loop correto |
+| Session state machine | OpenAI Agents SDK (`openai-agents-python`) | comparação |
+| FastAPI streaming | [FastAPI SSE docs](https://fastapi.tiangolo.com/advanced/server-sent-events/) | template |
+| MCP tool registry | [modelcontextprotocol/python-sdk](https://github.com/modelcontextprotocol/python-sdk) | tool ABI base |
+| Docker sandbox (rough) | OpenHands `runtime/docker/` | edge cases |
+
+### Specs externas a adotar
+
+| Spec | Para que | Source |
+|---|---|---|
+| MCP | Tool protocol externo | [modelcontextprotocol.io](https://modelcontextprotocol.io/) |
+| Anthropic content blocks | Event payload format | [Messages API](https://docs.anthropic.com/) |
+| OpenAPI 3.1 | Documentar nossa REST API | gerado automático pelo FastAPI |
+| OpenTelemetry | Tracing (futuro Phase 4) | [opentelemetry.io](https://opentelemetry.io/) |
+
+### Anti-reuso (NÃO usar nesta fase)
+
+- ❌ LiteLLM (Phase 4) — Phase 1 só Anthropic SDK direto pra simplicidade
+- ❌ LangChain / LangGraph como dep (Phase 3 via adapter)
+- ❌ MCP servers — só protocolo, sem implementação (Phase 4)
+- ❌ Postgres deps (Phase 4)
+- ❌ Vault deps (Phase 4)
+
+### Economia estimada com reuso
+
+| Decisão | Economia |
+|---|---|
+| Usar `python-statemachine` vs roll-our-own | 1 dia |
+| Estudar OpenHands V1 EventLog antes de codar | 2-3 dias (evita redesigns) |
+| Adotar Anthropic Cookbook tool-use pattern | 1-2 dias |
+| `sse-starlette` vs SSE manual | 0.5-1 dia |
+| `typer` vs argparse + click custom | 0.5 dia |
+| **Total** | **5-8 dias** numa fase de 10 dias |
+
+---
+
 ## Riscos e mitigações
 
 ### R1.1 — SSE + asyncio + harness lifecycle é mais complexo que parece

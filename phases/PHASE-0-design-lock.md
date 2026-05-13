@@ -220,6 +220,46 @@ Atualizar README de cada spec com:
 
 ---
 
+## Reusable Components
+
+Antes de escrever templates / processos do zero, copiar/adaptar de projetos maduros:
+
+### Templates a usar diretamente
+
+| Componente | Fonte | License | Uso |
+|---|---|---|---|
+| `CODE_OF_CONDUCT.md` | [Contributor Covenant 2.1](https://www.contributor-covenant.org/version/2/1/code_of_conduct/) | CC BY 4.0 | copy-paste + add email |
+| `LICENSE` (Apache 2.0) | [Apache.org](https://www.apache.org/licenses/LICENSE-2.0.txt) | Apache 2.0 | copy textual |
+| `CONTRIBUTING.md` style | [FastAPI CONTRIBUTING](https://github.com/fastapi/fastapi/blob/master/CONTRIBUTING.md) | MIT | inspirar estrutura |
+| Issue template RFC | [Rust RFC process](https://github.com/rust-lang/rfcs/blob/master/0000-template.md) | Apache 2.0 + MIT | adaptar |
+| Issue template RFC alt | [Python PEP template](https://peps.python.org/pep-0001/) | public domain | alternativa |
+
+### Patterns a estudar
+
+| Pattern | Fonte | Por quê |
+|---|---|---|
+| Anthropic Managed Agents API schemas | [docs](https://platform.claude.com/docs/en/managed-agents) | compat superficial referência |
+| Open Agent Specification | [oracle/agent-spec](https://github.com/oracle/agent-spec) | possível adoção como agent definition format |
+| Semver conventions | [semver.org](https://semver.org/) | versionamento de spec |
+| RFC process (formal) | [Python PEP 1](https://peps.python.org/pep-0001/) ou [TC39 process](https://tc39.es/process-document/) | governança madura |
+
+### Spec drafts já no repo
+
+| Doc | O que reusar |
+|---|---|
+| `docs/SPEC-HARNESS-ADAPTER.md` | já rascunhado em v0.1.0 |
+| `docs/SPEC-EVENT-SCHEMA.md` | já rascunhado em v0.1.0 |
+| `docs/COMPARISON.md` | matriz vs competidores já mapeada |
+| `docs/RESEARCH.md` | ~80 links categorizados |
+
+### Anti-reuso (NÃO copiar)
+
+- ❌ Códigos de conduta exóticos (manter Contributor Covenant)
+- ❌ Licenças não-OSI-approved
+- ❌ Processos RFC sobre-engenheirados (manter leve)
+
+---
+
 ## Riscos e mitigações
 
 ### R0.1 — Ninguém revisa (engajamento baixo)

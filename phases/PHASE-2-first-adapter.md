@@ -329,6 +329,70 @@ Demonstra que plugins funcionam.
 
 ---
 
+## Reusable Components
+
+### Sistemas de plugin Python (escolher um)
+
+| Sistema | Fonte | License | Trade-off |
+|---|---|---|---|
+| `pluggy` | [pytest-dev/pluggy](https://github.com/pytest-dev/pluggy) | MIT | **Recomendado.** Usado por pytest, tox, devpi. Maturo, hookspec rico. |
+| `stevedore` | [openstack/stevedore](https://github.com/openstack/stevedore) | Apache 2.0 | Mais pesado, OpenStack flavor. |
+| `importlib.metadata` | stdlib (Python 3.10+) | PSF | Mínimo, sem hooks. Bom se não precisar de mais. |
+
+**Decisão recomendada:** `pluggy` se queremos hooks futuros (pre/post step, on_error, etc.). `importlib.metadata` se for descoberta simples sem extensão.
+
+### Patterns de conformance test suite
+
+| Pattern | Fonte | Por quê estudar |
+|---|---|---|
+| ASGI test suite | [django/asgiref `testing.py`](https://github.com/django/asgiref) | spec conformance Python para ASGI |
+| WSGI compliance | [pep3333_validator](https://peps.python.org/pep-3333/#validator) | template formal |
+| MCP spec compliance tests | [modelcontextprotocol/specification](https://github.com/modelcontextprotocol/specification) | conformance moderno |
+| pytest fixtures | [pytest docs](https://docs.pytest.org/en/stable/explanation/fixtures.html) | estrutura do runner |
+
+### Bibliotecas de protocolo
+
+| Lib | Fonte | License | Para que |
+|---|---|---|---|
+| `typing.Protocol` | stdlib (Python 3.8+) | PSF | Interface estrutural |
+| `runtime-checkable` decorator | stdlib | PSF | Validação |
+| `pydantic` v2 | MIT | MIT | Tipos de dados compartilhados |
+| `attrs` ou `dataclasses` | stdlib + attrs | MIT | SessionContext, etc. |
+
+### Code a estudar (não forkar)
+
+| Código | Repo | Por quê |
+|---|---|---|
+| Plugin discovery pattern | [black](https://github.com/psf/black/blob/main/pyproject.toml) (entry_points) | exemplo mínimo |
+| Plugin discovery rich | [pytest](https://github.com/pytest-dev/pytest) (pluggy) | exemplo completo |
+| AsyncIterator patterns | [httpx streaming](https://github.com/encode/httpx/) | tipagem correta |
+| Adapter pattern | OpenHands V1 Agent abstraction | comparação |
+
+### Tools / utilities reusáveis
+
+| Tool | Source | License | Uso |
+|---|---|---|---|
+| Tool schema validation | JSON Schema lib `jsonschema` | MIT | Validar input de tools |
+| Bash tool example | Anthropic Cookbook | educacional | template bash tool |
+| MCP tool wrapping | MCP Python SDK | MIT | mapping MCP ↔ Wake Tool |
+
+### Anti-reuso
+
+- ❌ Não importar LangChain/LangGraph como dep do core (eles são USERS via adapter, não deps)
+- ❌ Não importar CrewAI (idem)
+- ❌ Não criar framework de tools próprio se MCP serve
+
+### Economia estimada com reuso
+
+| Decisão | Economia |
+|---|---|
+| `pluggy` vs sistema de plugin custom | 1-2 dias |
+| Adotar conformance test pattern do ASGI/MCP | 1 dia |
+| `typing.Protocol` vs ABCs | 0.5 dia |
+| **Total** | **2.5-3.5 dias** numa fase de 10 dias |
+
+---
+
 ## Riscos e mitigações
 
 ### R2.1 — Signature da HarnessAdapter precisa mudar depois de implementar
