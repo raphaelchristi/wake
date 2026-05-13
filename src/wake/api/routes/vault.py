@@ -32,6 +32,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 
 from wake.api.dependencies import AppState, get_state, get_vault
+from wake.api.oauth_state import OAuthStateError, sign_state, verify_state
 
 logger = structlog.get_logger(__name__)
 
@@ -155,17 +156,25 @@ def _oauth_config(state: AppState, provider: str) -> dict[str, str]:
     return cfg
 
 
-@router.post("/oauth/start", response_model=OAuthStartResponse)
-async def oauth_start(
-    body: OAuthStartRequest,
-    request: Request,
-    vault: Any = Depends(get_vault),  # noqa: ARG001 - 503 if vault missing
+async def _start_oauth_flow(
+    *,
+    app_state: AppState,
+    provider: str,
+    scopes: list[str] | None,
+    redirect_uri: str | None,
+    vault_id_to_rotate: str | None = None,
 ) -> OAuthStartResponse:
-    """Start an OAuth Authorization Code flow for ``body.provider``."""
-    if body.provider not in SUPPORTED_PROVIDERS:
+    """Internal helper: build authorize URL with a signed ``state`` token.
+
+    Used by both ``POST /oauth/start`` and ``POST /credentials/{id}/rotate``.
+    The signed state carries ``provider`` + ``redirect_uri`` + optional
+    ``vault_id_to_rotate`` so the callback can complete without any
+    per-process map (fix for finding #4).
+    """
+    if provider not in SUPPORTED_PROVIDERS:
         raise HTTPException(
             status_code=400,
-            detail=f"unknown provider {body.provider!r}; expected one of {SUPPORTED_PROVIDERS}",
+            detail=f"unknown provider {provider!r}; expected one of {SUPPORTED_PROVIDERS}",
         )
 
     try:
@@ -175,38 +184,64 @@ async def oauth_start(
             status_code=501, detail="OAuth helper not available"
         ) from exc
 
-    state = get_state(request)
-    cfg = _oauth_config(state, body.provider)
-    if body.redirect_uri:
-        cfg["redirect_uri"] = body.redirect_uri
+    cfg = _oauth_config(app_state, provider)
+    if redirect_uri:
+        cfg["redirect_uri"] = redirect_uri
     if not cfg["client_id"] or not cfg["client_secret"]:
         raise HTTPException(
             status_code=500,
             detail=(
-                f"OAuth client not configured for {body.provider!r} — set "
-                f"WAKE_OAUTH_{body.provider.upper()}_CLIENT_ID and "
-                f"WAKE_OAUTH_{body.provider.upper()}_CLIENT_SECRET."
+                f"OAuth client not configured for {provider!r} — set "
+                f"WAKE_OAUTH_{provider.upper()}_CLIENT_ID and "
+                f"WAKE_OAUTH_{provider.upper()}_CLIENT_SECRET."
             ),
         )
 
+    # Pre-sign a signed state token; pass it to OAuthFlow.build_authorize_url
+    # so it lands in the authorize URL verbatim. On callback the provider
+    # echoes it back as ``?state=`` and we verify it without server state.
+    state_payload: dict[str, Any] = {
+        "provider": provider,
+        "scopes": list(scopes or []),
+        "redirect_uri": cfg["redirect_uri"],
+    }
+    if vault_id_to_rotate:
+        state_payload["vault_id_to_rotate"] = vault_id_to_rotate
+    signed = sign_state(state_payload)
+
     flow = OAuthFlow.for_provider(
-        body.provider,
+        provider,
         client_id=cfg["client_id"],
         client_secret=cfg["client_secret"],
         redirect_uri=cfg["redirect_uri"],
     )
-    url, csrf_state = flow.build_authorize_url(scopes=body.scopes)
+    url, returned_state = flow.build_authorize_url(scopes=scopes, state=signed)
 
-    state.oauth_flows[csrf_state] = {
-        "flow": flow,
-        "provider": body.provider,
-        "scopes": body.scopes or [],
-        "created_at": datetime.now(timezone.utc),
-    }
+    _audit(app_state, decision="oauth_start", provider=provider)
 
-    _audit(state, decision="oauth_start", provider=body.provider)
+    return OAuthStartResponse(provider=provider, auth_url=url, state=returned_state)
 
-    return OAuthStartResponse(provider=body.provider, auth_url=url, state=csrf_state)
+
+@router.post("/oauth/start", response_model=OAuthStartResponse)
+async def oauth_start(
+    body: OAuthStartRequest,
+    request: Request,
+    vault: Any = Depends(get_vault),  # noqa: ARG001 - 503 if vault missing
+) -> OAuthStartResponse:
+    """Start an OAuth Authorization Code flow for ``body.provider``.
+
+    Returns ``{auth_url, state}`` where ``state`` is a signed token
+    (HMAC-SHA256) instead of an opaque server-side handle. Multi-replica
+    deploys can complete the callback on any pod that shares
+    ``WAKE_OAUTH_STATE_SECRET``.
+    """
+    app_state = get_state(request)
+    return await _start_oauth_flow(
+        app_state=app_state,
+        provider=body.provider,
+        scopes=body.scopes,
+        redirect_uri=body.redirect_uri,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -218,56 +253,150 @@ async def oauth_start(
 async def oauth_callback(
     request: Request,
     code: str = Query(..., description="Authorization code from the provider"),
-    state: str = Query(..., description="CSRF state echoed by the provider"),
+    state: str = Query(..., description="Signed state echoed by the provider"),
     vault: Any = Depends(get_vault),
 ) -> CredentialMetadataDTO:
-    """Exchange an OAuth ``code`` for an access token, then store it."""
+    """Exchange an OAuth ``code`` for an access token, then store it.
+
+    The ``state`` is now a signed HMAC-SHA256 token (Phase 5.1 finding #4
+    fix) — any replica that shares ``WAKE_OAUTH_STATE_SECRET`` can verify
+    it. If the decoded payload carries ``vault_id_to_rotate`` we route to
+    ``vault.replace`` (rotate); otherwise ``vault.add`` (initial add).
+    """
     app_state = get_state(request)
-    entry = app_state.oauth_flows.pop(state, None)
-    if entry is None:
-        raise HTTPException(status_code=400, detail="unknown or expired state")
 
-    flow = entry.get("flow") if isinstance(entry, dict) else None
-    provider = entry.get("provider", "custom") if isinstance(entry, dict) else "custom"
-    scopes = list(entry.get("scopes", [])) if isinstance(entry, dict) else []
+    try:
+        decoded = verify_state(state)
+    except OAuthStateError as exc:
+        _audit(app_state, decision="oauth_failed", detail=f"state: {exc}")
+        # Be explicit about what went wrong so old clients holding pre-5.1
+        # opaque-UUID states see a clear error instead of an empty 400.
+        raise HTTPException(
+            status_code=400,
+            detail=f"invalid or expired OAuth state: {exc}",
+        ) from exc
 
-    if flow is None:
-        raise HTTPException(status_code=400, detail="malformed oauth state entry")
+    provider = str(decoded.get("provider", "custom"))
+    scopes = list(decoded.get("scopes", []) or [])
+    redirect_uri = str(decoded.get("redirect_uri", ""))
+    vault_id_to_rotate = decoded.get("vault_id_to_rotate")
+    if vault_id_to_rotate is not None and not isinstance(vault_id_to_rotate, str):
+        raise HTTPException(
+            status_code=400, detail="invalid state: vault_id_to_rotate must be str"
+        )
 
+    # Rebuild the flow from env-resolved config. Multi-replica safe: every
+    # replica reads the same client_id/secret/redirect_uri from env.
+    cfg = _oauth_config(app_state, provider)
+    if redirect_uri:
+        cfg["redirect_uri"] = redirect_uri
+    if not cfg["client_id"] or not cfg["client_secret"]:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"OAuth client not configured for {provider!r}; the callback "
+                "pod must share WAKE_OAUTH_<PROVIDER>_CLIENT_ID/SECRET env."
+            ),
+        )
+
+    try:
+        from wake_vault_infisical.oauth import OAuthFlow  # noqa: PLC0415
+    except ImportError as exc:
+        raise HTTPException(
+            status_code=501, detail="OAuth helper not available"
+        ) from exc
+
+    flow = OAuthFlow.for_provider(
+        provider,
+        client_id=cfg["client_id"],
+        client_secret=cfg["client_secret"],
+        redirect_uri=cfg["redirect_uri"],
+    )
+    # The flow's own CSRF check is satisfied by passing ``state`` through
+    # (it only compares if _state was latched on this instance; we did NOT
+    # call build_authorize_url here so the check is skipped).
     try:
         data = await flow.exchange_code(code, state=state)
     except Exception as exc:
         logger.exception("oauth_callback_failed", provider=provider)
-        _audit(app_state, decision="oauth_failed", provider=str(provider), detail=str(exc))
+        _audit(app_state, decision="oauth_failed", provider=provider, detail=str(exc))
         raise HTTPException(status_code=400, detail=f"OAuth exchange failed: {exc}") from exc
 
     token: str = str(data.get("access_token", ""))
     if not token:
         raise HTTPException(status_code=502, detail="provider returned empty token")
 
-    name = f"{provider}_token_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
-    try:
-        meta = await vault.add(
-            name=name,
-            provider=str(provider),
-            value=token,
-            scopes=scopes or None,
-            metadata={"oauth_source": "dashboard"},
-        )
-    except Exception as exc:
-        logger.exception("vault_add_failed", provider=provider)
-        raise HTTPException(status_code=502, detail=f"vault add failed: {exc}") from exc
+    if vault_id_to_rotate:
+        # Rotate: replace the existing credential (carry over name/provider/scopes
+        # from the old entry unless we have a tighter spec). Falls back to
+        # ``vault.add`` when the adapter does not implement ``replace`` so old
+        # adapters don't hard-fail.
+        try:
+            if hasattr(vault, "replace"):
+                meta = await vault.replace(
+                    vault_id_to_rotate,
+                    value=token,
+                    provider=provider,
+                    scopes=scopes or None,
+                    metadata={"oauth_source": "dashboard", "rotated": True},
+                )
+            else:
+                # Defensive: degrade to add + best-effort revoke.
+                name = (
+                    f"{provider}_token_"
+                    f"{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
+                )
+                meta = await vault.add(
+                    name=name,
+                    provider=provider,
+                    value=token,
+                    scopes=scopes or None,
+                    metadata={"oauth_source": "dashboard", "rotated": True},
+                )
+                try:
+                    await vault.revoke(vault_id_to_rotate)
+                except Exception:  # noqa: BLE001
+                    logger.warning(
+                        "vault_legacy_revoke_after_rotate_failed",
+                        vault_id=vault_id_to_rotate,
+                    )
+        except Exception as exc:
+            logger.exception("vault_replace_failed", provider=provider)
+            raise HTTPException(
+                status_code=502, detail=f"vault replace failed: {exc}"
+            ) from exc
 
-    _audit(
-        app_state,
-        decision="oauth_success",
-        provider=str(provider),
-        vault_id=getattr(meta, "vault_id", None),
-    )
+        _audit(
+            app_state,
+            decision="rotated",
+            provider=provider,
+            vault_id=getattr(meta, "vault_id", None),
+            detail=f"rotated_from={vault_id_to_rotate}",
+        )
+    else:
+        name = f"{provider}_token_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
+        try:
+            meta = await vault.add(
+                name=name,
+                provider=provider,
+                value=token,
+                scopes=scopes or None,
+                metadata={"oauth_source": "dashboard"},
+            )
+        except Exception as exc:
+            logger.exception("vault_add_failed", provider=provider)
+            raise HTTPException(status_code=502, detail=f"vault add failed: {exc}") from exc
+
+        _audit(
+            app_state,
+            decision="oauth_success",
+            provider=provider,
+            vault_id=getattr(meta, "vault_id", None),
+        )
 
     return CredentialMetadataDTO(
         vault_id=getattr(meta, "vault_id", ""),
-        name=getattr(meta, "name", name),
+        name=getattr(meta, "name", ""),
         provider=str(getattr(meta, "provider", provider)),
         scopes=list(getattr(meta, "scopes", []) or []),
         created_at=getattr(meta, "created_at", datetime.now(timezone.utc)),
@@ -296,12 +425,14 @@ async def rotate_credential(
     request: Request,
     vault: Any = Depends(get_vault),
 ) -> OAuthStartResponse:
-    """Start a new OAuth flow for the same provider; callback will replace.
+    """Start a new OAuth flow that will *replace* ``vault_id`` on callback.
 
-    Rotation is two-step: this endpoint returns a fresh auth URL; the
-    UI sends the user through it, and the callback path stores the new
-    token. The old credential is **not** revoked here so an in-flight
-    session can finish using it; ``DELETE`` is the explicit revoke.
+    Two-step rotate: this endpoint returns an auth URL whose ``state``
+    embeds the original ``vault_id``. When the user finishes the flow
+    the callback handler calls ``vault.replace(vault_id, new_token)``
+    (Phase 5.1 finding #5 fix). The old credential is revoked atomically
+    inside ``replace``, so there is no need for the operator to also
+    issue a ``DELETE`` afterwards.
     """
     try:
         meta = await vault.get_metadata(vault_id)
@@ -311,14 +442,17 @@ async def rotate_credential(
     provider = str(getattr(meta, "provider", "custom"))
     scopes = list(getattr(meta, "scopes", []) or [])
 
-    start_resp = await oauth_start(
-        OAuthStartRequest(provider=provider, scopes=scopes, redirect_uri=body.redirect_uri),
-        request=request,
-        vault=vault,
+    app_state = get_state(request)
+    start_resp = await _start_oauth_flow(
+        app_state=app_state,
+        provider=provider,
+        scopes=scopes,
+        redirect_uri=body.redirect_uri,
+        vault_id_to_rotate=vault_id,
     )
 
     _audit(
-        get_state(request),
+        app_state,
         decision="rotate_started",
         provider=provider,
         vault_id=vault_id,
