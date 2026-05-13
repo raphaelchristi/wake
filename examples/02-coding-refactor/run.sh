@@ -32,35 +32,36 @@ for _ in $(seq 1 40); do
 done
 
 echo "[wake] creating environment from wake.yaml..."
-ENV_OUTPUT="$(wake environment create --name python-dev --config "${HERE}/wake.yaml")"
-echo "${ENV_OUTPUT}"
-ENV_ID="$(printf '%s\n' "${ENV_OUTPUT}" | awk '/^[[:space:]]*id /{print $2; exit}')"
+ENV_ID="$(wake environment create \
+  --name python-dev \
+  --config "${HERE}/wake.yaml" \
+  --id-only)"
+echo "environment: ${ENV_ID}"
 
 echo "[wake] creating agent refactor-bot..."
-AGENT_OUTPUT="$(wake agent create \
+AGENT_ID="$(wake agent create \
   --name refactor-bot \
   --model claude-opus-4-7 \
   --system "You refactor Python code using tools. Be concise." \
-  --tools bash,file_read,file_write,file_edit)"
-echo "${AGENT_OUTPUT}"
-AGENT_ID="$(printf '%s\n' "${AGENT_OUTPUT}" | awk '/^[[:space:]]*id /{print $2; exit}')"
+  --tools bash,file_read,file_write,file_edit \
+  --id-only)"
+echo "agent: ${AGENT_ID}"
 
-if [[ -z "${AGENT_ID:-}" ]]; then
-  echo "error: could not parse agent id from create output" >&2
+if [[ -z "${AGENT_ID}" ]]; then
+  echo "error: empty agent id" >&2
   exit 1
 fi
 
 echo "[wake] creating session..."
-if [[ -n "${ENV_ID:-}" ]]; then
-  SESSION_OUTPUT="$(wake session create --agent "${AGENT_ID}" --environment "${ENV_ID}")"
+if [[ -n "${ENV_ID}" ]]; then
+  SESSION_ID="$(wake session create --agent "${AGENT_ID}" --environment "${ENV_ID}" --id-only)"
 else
-  SESSION_OUTPUT="$(wake session create --agent "${AGENT_ID}")"
+  SESSION_ID="$(wake session create --agent "${AGENT_ID}" --id-only)"
 fi
-echo "${SESSION_OUTPUT}"
-SESSION_ID="$(printf '%s\n' "${SESSION_OUTPUT}" | awk '/^[[:space:]]*id /{print $2; exit}')"
+echo "session: ${SESSION_ID}"
 
-if [[ -z "${SESSION_ID:-}" ]]; then
-  echo "error: could not parse session id from create output" >&2
+if [[ -z "${SESSION_ID}" ]]; then
+  echo "error: empty session id" >&2
   exit 1
 fi
 

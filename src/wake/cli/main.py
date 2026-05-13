@@ -124,6 +124,39 @@ def _handle_api_error(exc: WakeAPIError) -> None:
     _abort(str(exc), code=2)
 
 
+def _emit_resource(
+    label: str,
+    resource: dict[str, object],
+    *,
+    output_json: bool = False,
+    id_only: bool = False,
+) -> None:
+    """Print a freshly-created resource according to user preferences.
+
+    ``--id-only`` and ``--json`` give callers a script-friendly output
+    so example shell scripts (and downstream automation) don't have to
+    parse the rich-rendered panel. Default remains the human-readable
+    panel + a ``→ created`` summary line.
+    """
+    if id_only:
+        rid = resource.get("id", "")
+        # Plain print (no rich markup, no colour) so subshell capture
+        # sees only the ID.
+        print(rid)
+        return
+    if output_json:
+        import json as _json
+
+        print(_json.dumps(resource, default=str))
+        return
+    render_detail(label, resource)
+    rid = resource.get("id")
+    if rid:
+        console.print(
+            f"[dim]→ created {label.lower()}[/dim] [bold cyan]{rid}[/bold cyan]"
+        )
+
+
 # ---------------------------------------------------------------------------
 # `wake server`
 # ---------------------------------------------------------------------------
@@ -198,6 +231,14 @@ def agent_create(
         typer.Option("--tools", help="Comma-separated tool types, e.g. bash,file_read."),
     ] = None,
     description: Annotated[str | None, typer.Option("--description")] = None,
+    output_json: Annotated[
+        bool,
+        typer.Option("--json", help="Emit the raw JSON object instead of a pretty panel."),
+    ] = False,
+    id_only: Annotated[
+        bool,
+        typer.Option("--id-only", help="Print just the agent ID — handy for shell scripting."),
+    ] = False,
     server: ServerOption = None,
 ) -> None:
     """Create a new agent and print its ID."""
@@ -214,10 +255,7 @@ def agent_create(
         except WakeAPIError as exc:
             _handle_api_error(exc)
             return
-    render_detail("Agent", agent)
-    agent_id = agent.get("id")
-    if agent_id:
-        console.print(f"[dim]→ created agent[/dim] [bold cyan]{agent_id}[/bold cyan]")
+    _emit_resource("Agent", agent, output_json=output_json, id_only=id_only)
 
 
 @agent_app.command("list")
@@ -276,6 +314,14 @@ def environment_create(
         Path | None,
         typer.Option("--config", help="Path to a YAML file with the environment config."),
     ] = None,
+    output_json: Annotated[
+        bool,
+        typer.Option("--json", help="Emit the raw JSON object instead of a pretty panel."),
+    ] = False,
+    id_only: Annotated[
+        bool,
+        typer.Option("--id-only", help="Print just the environment ID."),
+    ] = False,
     server: ServerOption = None,
 ) -> None:
     """Create an environment, optionally loading config from a YAML file."""
@@ -292,7 +338,7 @@ def environment_create(
         except WakeAPIError as exc:
             _handle_api_error(exc)
             return
-    render_detail("Environment", env)
+    _emit_resource("Environment", env, output_json=output_json, id_only=id_only)
 
 
 @environment_app.command("list")
@@ -333,6 +379,14 @@ def session_create(
     environment: Annotated[
         str | None, typer.Option("--environment", help="Environment ID (optional).")
     ] = None,
+    output_json: Annotated[
+        bool,
+        typer.Option("--json", help="Emit the raw JSON object instead of a pretty panel."),
+    ] = False,
+    id_only: Annotated[
+        bool,
+        typer.Option("--id-only", help="Print just the session ID."),
+    ] = False,
     server: ServerOption = None,
 ) -> None:
     """Create a new session for the given agent."""
@@ -342,10 +396,7 @@ def session_create(
         except WakeAPIError as exc:
             _handle_api_error(exc)
             return
-    render_detail("Session", session)
-    sid = session.get("id")
-    if sid:
-        console.print(f"[dim]→ created session[/dim] [bold cyan]{sid}[/bold cyan]")
+    _emit_resource("Session", session, output_json=output_json, id_only=id_only)
 
 
 @session_app.command("list")
