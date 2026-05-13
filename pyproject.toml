@@ -57,8 +57,16 @@ dev = [
 adapter-claude-sdk = [
     "wake-adapter-claude-sdk",
 ]
+adapter-vault-infisical = [
+    "wake-vault-infisical",
+]
+adapter-llm-litellm = [
+    "wake-llm-litellm",
+]
 all-adapters = [
     "wake-adapter-claude-sdk",
+    "wake-vault-infisical",
+    "wake-llm-litellm",
 ]
 
 [project.scripts]

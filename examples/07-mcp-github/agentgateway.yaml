@@ -1,0 +1,25 @@
+# Example-specific agentgateway config. Allows ONLY api.github.com so
+# attempts to exfil credentials to other hosts get denied even if the
+# main deploy config is more permissive.
+
+listen:
+  port: 8888
+
+vault:
+  endpoint: http://infisical-vault:8080
+  project: wake
+  environment: prod
+
+allowed_hosts:
+  - api.github.com
+
+mcp_routes:
+  - name: github
+    upstream: https://api.github.com
+    auth:
+      type: bearer
+      vault_ref: github_token
+
+limits:
+  max_request_bytes: 1048576   # 1 MiB
+  request_timeout_seconds: 30
