@@ -10,7 +10,7 @@ Plano de execução do Wake. Cada fase tem **gates de saída objetivos** — voc
 
 | Fase | Nome | Duração | Status |
 |---|---|---|---|
-| [Phase 0](./PHASE-0-design-lock.md) | Design Lock | 1-2 semanas | 🟡 in_progress |
+| [Phase 0](./PHASE-0-design-lock.md) | Design Lock | 1-2 semanas | ✅ done |
 | [Phase 1](./PHASE-1-skeleton.md) | Skeleton | 2 semanas | ✅ done |
 | [Phase 2](./PHASE-2-first-adapter.md) | First Adapter | 2 semanas | ✅ done |
 | [Phase 3](./PHASE-3-spec-validation.md) | Spec Validation | 3 semanas | ✅ done |
@@ -18,6 +18,22 @@ Plano de execução do Wake. Cada fase tem **gates de saída objetivos** — voc
 | [Phase 5](./PHASE-5-public-launch.md) | Public Launch | 1 semana | ⚪ not_started |
 
 **Total estimado:** 12-13 semanas (≈3 meses) para Wake v0.1.0 público com 4 adapters funcionando.
+
+### Phase 0 — done (empirical validation in lieu of 7-day review window)
+
+Phase 0 originalmente exigia janela pública de 7 dias antes de lock das specs. Foi substituído por **validação empírica via implementação** — Phase 2 e 3 provaram a HarnessAdapter ABI v0.1.0 com 4 reference adapters atingindo 10/10 conformance. Specs locked sem amendments.
+
+Deliverables fechados:
+- `LICENSE` Apache 2.0 (`24d0c93`)
+- `CONTRIBUTING.md` com processo RFC (`24d0c93`)
+- `CODE_OF_CONDUCT.md` (Contributor Covenant v2.1, `fbee2da`)
+- `.github/ISSUE_TEMPLATE/{rfc,bug,feature}.md` + `config.yml` (`fbee2da`)
+- `.github/PULL_REQUEST_TEMPLATE.md` (`fbee2da`)
+- `phases/decisions/runtime-language.md` (Python decision documented)
+- `phases/decisions/license.md` (Apache 2.0 decision documented)
+- `phases/decisions/spec-lock-v0.1.0.md` (lock without 7-day window, justified)
+- RFC issues abertas: [#1](https://github.com/raphaelchristi/wake/issues/1) HarnessAdapter, [#2](https://github.com/raphaelchristi/wake/issues/2) Event Schema, [#3](https://github.com/raphaelchristi/wake/issues/3) Runtime language
+- Git tag: `spec-v0.1.0-frozen` (HarnessAdapter ABI + Event Schema v0.1.0 locked)
 
 ### Phase 1 — done in 28 min wall-clock (multi-agent)
 
