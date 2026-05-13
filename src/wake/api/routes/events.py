@@ -1,0 +1,137 @@
+# ruff: noqa: B008, TC001, SIM105
+"""Session events routes.
+
+POST /v1/sessions/{id}/events   append an event (typically user.message); kicks the harness
+GET  /v1/sessions/{id}/events   list events
+"""
+
+from __future__ import annotations
+
+import asyncio
+from typing import Any
+
+import structlog
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+from pydantic import BaseModel, Field
+
+from wake.api.dependencies import (
+    get_agent_store,
+    get_event_log,
+    get_session_machine,
+    get_state,
+)
+from wake.core.event_log import EventLog
+from wake.core.session import SessionStateMachine
+from wake.store.base import AgentStore
+from wake.types import Event, EventType
+
+logger = structlog.get_logger(__name__)
+
+router = APIRouter(prefix="/v1/sessions", tags=["events"])
+
+
+class EventCreate(BaseModel):
+    type: EventType
+    payload: dict[str, Any] = Field(default_factory=dict)
+    parent_id: str | None = None
+    metadata: dict[str, Any] | None = None
+
+
+class EventList(BaseModel):
+    data: list[Event]
+
+
+@router.post(
+    "/{session_id}/events",
+    response_model=Event,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def append_event(
+    session_id: str,
+    body: EventCreate,
+    request: Request,
+    background: BackgroundTasks,
+    event_log: EventLog = Depends(get_event_log),
+    machine: SessionStateMachine = Depends(get_session_machine),
+    agent_store: AgentStore = Depends(get_agent_store),
+) -> Event:
+    session = await machine.get(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="session not found")
+
+    if session.status == "terminated":
+        raise HTTPException(status_code=409, detail="session is terminated")
+
+    event = await event_log.append(
+        session_id,
+        body.type,
+        body.payload,
+        parent_id=body.parent_id,
+        metadata=body.metadata,
+    )
+
+    # If the user just spoke, kick the harness in the background.
+    if body.type == "user.message":
+        agent = await agent_store.get(session.agent_id, version=session.agent_version)
+        if agent is None:
+            raise HTTPException(status_code=404, detail="agent not found")
+
+        state = get_state(request)
+        if state.harness is None:
+            logger.warning("harness_not_configured", session_id=session_id)
+        else:
+            background.add_task(_run_harness_safely, request, session_id, agent.id)
+
+    return event
+
+
+@router.get("/{session_id}/events", response_model=EventList)
+async def list_events(
+    session_id: str,
+    since: int = 0,
+    event_log: EventLog = Depends(get_event_log),
+) -> EventList:
+    events = await event_log.get(session_id, since=since)
+    return EventList(data=events)
+
+
+async def _run_harness_safely(request: Request, session_id: str, agent_id: str) -> None:
+    """Background task to drive the harness for a session."""
+    state = get_state(request)
+    if state.harness is None or state.session_machine is None or state.agent_store is None:
+        return
+
+    sess = await state.session_machine.get(session_id)
+    if sess is None:
+        return
+    agent = await state.agent_store.get(agent_id, version=sess.agent_version)
+    if agent is None:
+        return
+
+    # Acquire / refresh sandbox handle if any tool requires it.
+    sandbox_handle = state.sandbox_handles.get(session_id)
+
+    try:
+        await state.session_machine.start(session_id)
+    except ValueError:
+        # already running or terminated — skip
+        pass
+
+    try:
+        await state.harness.run_step(sess, agent, sandbox_handle=sandbox_handle)  # type: ignore[arg-type]
+        await state.session_machine.complete(session_id)
+    except asyncio.CancelledError:
+        await state.session_machine.fail(session_id, "cancelled", transient=False)
+        raise
+    except Exception as e:  # noqa: BLE001
+        logger.exception("harness_step_failed", session_id=session_id)
+        if state.event_log is not None:
+            await state.event_log.append(
+                session_id,
+                "error",
+                {"error_type": "harness_panic", "message": str(e)},
+            )
+        try:
+            await state.session_machine.fail(session_id, str(e), transient=False)
+        except Exception:  # noqa: BLE001
+            pass
