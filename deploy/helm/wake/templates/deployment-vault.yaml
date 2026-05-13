@@ -1,0 +1,47 @@
+{{- if .Values.vault.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "wake.fullname" . }}-vault
+  labels:
+    {{- include "wake.labels" . | nindent 4 }}
+    app.kubernetes.io/component: vault
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "wake.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: vault
+  template:
+    metadata:
+      labels:
+        {{- include "wake.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: vault
+    spec:
+      containers:
+        - name: vault
+          image: "{{ .Values.vault.image.repository }}:{{ .Values.vault.image.tag }}"
+          ports:
+            - name: api
+              containerPort: 8080
+          env:
+            - name: ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "wake.fullname" . }}-secret
+                  key: vault-encryption-key
+            - name: AUTH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "wake.fullname" . }}-secret
+                  key: vault-auth-secret
+            - name: DB_CONNECTION_URI
+              value: "postgres://{{ .Values.postgres.user }}:$(POSTGRES_PASSWORD)@{{ include "wake.fullname" . }}-postgres:5432/{{ .Values.postgres.database }}"
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "wake.fullname" . }}-secret
+                  key: postgres-password
+            - name: REDIS_URL
+              value: {{ include "wake.redisUrl" . | quote }}
+{{- end }}

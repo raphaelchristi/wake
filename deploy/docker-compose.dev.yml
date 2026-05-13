@@ -1,0 +1,27 @@
+# Dev overlay — apply on top of docker-compose.yml.
+#
+#   docker compose \
+#       -f deploy/docker-compose.yml \
+#       -f deploy/docker-compose.dev.yml \
+#       up
+#
+# Mounts the working tree into the API and worker containers so code
+# edits hot-reload through uvicorn's ``--reload`` and the worker
+# restart-on-crash loop.
+
+services:
+  wake-api:
+    command: ["server", "--host", "0.0.0.0", "--port", "8080", "--reload"]
+    volumes:
+      - ../src:/app/src:ro
+      - ../adapters:/app/adapters:ro
+    environment:
+      WAKE_LOG_LEVEL: debug
+
+  wake-worker:
+    command: ["worker", "--concurrency", "1"]
+    volumes:
+      - ../src:/app/src:ro
+      - ../adapters:/app/adapters:ro
+    environment:
+      WAKE_LOG_LEVEL: debug

@@ -1,0 +1,126 @@
+# Wake — production-grade docker-compose stack.
+#
+# Brings up the full Phase 4 topology on a single host:
+#
+#   * wake-api          — FastAPI (uvicorn) on :8080
+#   * wake-worker       — harness worker (multi-instance via `--scale`)
+#   * postgres          — Postgres 16, event store + advisory locks
+#   * redis             — pub/sub fan-out + lightweight queue
+#   * agentgateway      — egress proxy / MCP routing sidecar
+#   * infisical-vault   — credential vault sidecar (Phase 4 vault)
+#
+# Run:
+#   docker compose -f deploy/docker-compose.yml up -d
+#   curl http://localhost:8080/health
+#
+# Scale workers:
+#   docker compose -f deploy/docker-compose.yml up -d --scale wake-worker=3
+#
+# Override for dev (hot reload): include docker-compose.dev.yml as the
+# second `-f` argument.
+
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: wake
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-wake-dev-password}
+      POSTGRES_DB: wake
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wake -d wake"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  agentgateway:
+    # Real production deployments pin a specific agentgateway release.
+    # We use ghcr.io's nightly here to avoid bundling a Rust toolchain
+    # into this compose file; swap for a stable tag in your fork.
+    image: ghcr.io/agentgateway/agentgateway:latest
+    restart: unless-stopped
+    command: ["--config", "/etc/agentgateway/config.yaml"]
+    ports:
+      - "8888:8888"
+    volumes:
+      - ./agentgateway/config.yaml:/etc/agentgateway/config.yaml:ro
+    depends_on:
+      - infisical-vault
+
+  infisical-vault:
+    image: infisical/infisical:latest
+    restart: unless-stopped
+    environment:
+      ENCRYPTION_KEY: ${INFISICAL_ENCRYPTION_KEY:-6c1fe4e407b8911c104518103505b218}
+      AUTH_SECRET: ${INFISICAL_AUTH_SECRET:-5lrMXKKWCVocSrYjEYmDMOh8PCypIIVeo80fBoTomtw=}
+      DB_CONNECTION_URI: postgres://wake:${POSTGRES_PASSWORD:-wake-dev-password}@postgres:5432/wake
+      REDIS_URL: redis://redis:6379
+    ports:
+      - "8200:8080"  # Infisical's web UI / API
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  wake-api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: wake-ai/wake:0.4.0
+    restart: unless-stopped
+    environment:
+      WAKE_DATABASE_URL: postgresql+asyncpg://wake:${POSTGRES_PASSWORD:-wake-dev-password}@postgres:5432/wake
+      WAKE_REDIS_URL: redis://redis:6379
+      WAKE_VAULT_URL: http://infisical-vault:8080
+      WAKE_AGENTGATEWAY_URL: http://agentgateway:8888
+      WAKE_LOG_LEVEL: ${WAKE_LOG_LEVEL:-info}
+      # Per-provider keys are mounted from the host env so they never
+      # land in image layers.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  wake-worker:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: wake-ai/wake:0.4.0
+    restart: unless-stopped
+    command: ["worker", "--concurrency", "4"]
+    environment:
+      WAKE_DATABASE_URL: postgresql+asyncpg://wake:${POSTGRES_PASSWORD:-wake-dev-password}@postgres:5432/wake
+      WAKE_REDIS_URL: redis://redis:6379
+      WAKE_VAULT_URL: http://infisical-vault:8080
+      WAKE_AGENTGATEWAY_URL: http://agentgateway:8888
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  pgdata: {}
