@@ -2,15 +2,23 @@
   <img src="docs/assets/banner.png" alt="Wake — Durable runtime substrate for AI agents" width="900">
 </p>
 
-# Wake
+<h1 align="center">Wake</h1>
 
-> Durable runtime substrate for AI agents. Bring your framework. Bring your model. Bring your tools. Wake handles the event log, sandbox, vault and lifecycle.
+<p align="center">
+  <em>Durable runtime substrate for AI agents.</em><br>
+  Bring your framework, your model, your tools. Wake handles event log, sandbox, vault and lifecycle.
+</p>
 
-**Status:** pre-alpha — design phase. Nothing built yet. The docs below capture the thesis, the architecture, the spec proposal, and the roadmap.
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="Apache 2.0"></a>
+  <img src="https://img.shields.io/badge/python-3.11%2B-blue.svg" alt="Python 3.11+">
+  <img src="https://img.shields.io/badge/status-alpha-orange.svg" alt="alpha">
+  <a href="https://github.com/raphaelchristi/wake/releases/tag/v0.4.0-production"><img src="https://img.shields.io/badge/version-v0.4.0--production-green.svg" alt="v0.4.0"></a>
+</p>
 
 ---
 
-## What is Wake?
+## Why Wake?
 
 Three problems hit every team running AI agents in production:
 
@@ -18,90 +26,115 @@ Three problems hit every team running AI agents in production:
 2. **Sandbox** — agent runs arbitrary code, vulnerable to prompt injection
 3. **Framework lock-in** — LangGraph in one team, CrewAI in another, nothing shared
 
-Anthropic solved this internally with **Managed Agents** (proprietary, hosted, Claude-only). Wake is the open-source version — but goes further: **any harness** (LangGraph, CrewAI, Pydantic AI, Claude Agent SDK, custom) runs on the same substrate, with the same event log, the same sandbox, the same vault.
+Anthropic solved this internally with **Managed Agents** (proprietary, hosted, Claude-only). Wake is the open-source version — and goes further: *any* harness runs on the same substrate via the **`HarnessAdapter` ABI**.
 
-The piece nobody has built yet: **`HarnessAdapter` ABI** — the interface that makes this possible.
+## Quickstart
 
-## Why now?
+```bash
+pip install wake-ai[all-adapters]
+```
 
-The agent infrastructure layer is going to commoditize in the next 12 months. OpenHands V1 SDK, Microsoft Agent Framework, Multica, OpenClaw — they're all converging. The fight is over who establishes the standard.
+```python
+from wake.runtime import Session
+from wake_adapter_claude_sdk import ClaudeSDKAdapter
 
-Wake is the bet that **a framework-agnostic substrate with a published HarnessAdapter spec** is the right shape — and that publishing it openly, with reference adapters for LangGraph / CrewAI / Pydantic AI / Claude Agent SDK on day one, is the right play.
+session = await Session.create(
+    adapter=ClaudeSDKAdapter(model="claude-sonnet-4-6"),
+    tools=["bash", "file_read", "file_write"],
+)
 
-## How is Wake different?
+async for event in session.run("Refactor src/auth.py to use async/await"):
+    print(event.type, event.payload)
+```
 
-| | Wake | OpenHands V1 | OpenClaw | Multica | MAF | Managed Agents |
-|---|---|---|---|---|---|---|
-| Event log append-only | ✓ | ✓ | ✓ | partial | ✗ | ✓ |
-| Harness stateless | ✓ | ✓ | partial | n/a | ✗ | ✓ |
-| Sandbox-as-tool | ✓ | partial | ✗ | n/a | ✗ | ✓ |
-| **HarnessAdapter ABI public** | **✓** | **✗** | **✗** | **✗** | **✗** | **✗** |
-| Vault + proxy | ✓ | ✓ | ✓ | n/a | partial | ✓ |
-| Multi-framework | ✓ | ✗ | ✗ | CLIs only | ✗ | ✗ |
-| Self-host | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ |
+Swap `ClaudeSDKAdapter` for `LangGraphAdapter`, `CrewAIAdapter`, or `PydanticAIAdapter` — same substrate, same event log, same sandbox.
 
-The row that matters: **HarnessAdapter ABI public.**
+## Architecture
 
-## Documentation
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Harness  (Claude SDK · LangGraph · CrewAI · Pydantic AI)   │
+└──────────────────────────┬──────────────────────────────────┘
+                           │ HarnessAdapter ABI v0.1.0
+┌──────────────────────────▼──────────────────────────────────┐
+│  Wake Runtime  — sessions, dispatcher, event stream         │
+├─────────────────┬────────────────┬──────────────────────────┤
+│  Event Store    │   Sandbox      │      Vault               │
+│  Postgres/SQLite│   sandbox-rt   │      Infisical           │
+│  LISTEN/NOTIFY  │   Docker       │      OAuth flows         │
+│  partitioned    │   fallback     │      egress proxy        │
+└─────────────────┴────────────────┴──────────────────────────┘
+```
 
-Everything lives in [`docs/`](./docs/):
+The seam is the **HarnessAdapter ABI** (locked v0.1.0). Specs in [`docs/`](./docs/).
 
-1. [README](./docs/README.md) — Documentation index
-2. [VISION](./docs/VISION.md) — Why Wake exists, the thesis, the bet
-3. [PRINCIPLES](./docs/PRINCIPLES.md) — Design principles
-4. [ARCHITECTURE](./docs/ARCHITECTURE.md) — How Wake works technically
-5. [SPEC-HARNESS-ADAPTER](./docs/SPEC-HARNESS-ADAPTER.md) — The ABI, v0.1.0
-6. [SPEC-EVENT-SCHEMA](./docs/SPEC-EVENT-SCHEMA.md) — Canonical event log, v0.1.0
-7. [LANDSCAPE](./docs/LANDSCAPE.md) — OSS ecosystem map
-8. [COMPARISON](./docs/COMPARISON.md) — Wake vs every adjacent project
-9. [EXAMPLES](./docs/EXAMPLES.md) — 14 concrete usage scenarios
-10. [ROADMAP](./docs/ROADMAP.md) — Day-1, Day-30, Day-90, Day-365
-11. [RESEARCH](./docs/RESEARCH.md) — All references
-12. [FAQ](./docs/FAQ.md) — Honest answers to common questions
+## Adapters
 
-## What Wake is NOT
+| Adapter | Package | Conformance | Status |
+|---|---|---:|---|
+| Claude Agent SDK | `wake-adapter-claude-sdk` | 10/10 | stable |
+| LangGraph | `wake-adapter-langgraph` | 10/10 | stable |
+| CrewAI | `wake-adapter-crewai` | 10/10 | stable |
+| Pydantic AI | `wake-adapter-pydantic-ai` | 10/10 | stable |
 
-- Not a framework. LangGraph, CrewAI, Pydantic AI keep existing. Wake runs them.
-- Not a sandbox. Reuses [sandbox-runtime](https://github.com/anthropic-experimental/sandbox-runtime), Docker, gVisor, Firecracker.
-- Not a vault. Reuses [Infisical Agent Vault](https://github.com/Infisical/agent-vault).
-- Not a memory layer. Letta, Mem0 keep existing.
-- Not an observability platform. Langfuse, Phoenix consume Wake's event log via OpenTelemetry.
-- Not a durable execution engine. Temporal, Restate, DBOS keep existing (Wake may use one internally).
-- Not a SaaS product. OSS, self-host first.
+Write your own — see [`docs/WRITING-AN-ADAPTER.md`](./docs/WRITING-AN-ADAPTER.md).
 
-**It is:** the seam between all those pieces, governed by an open spec (HarnessAdapter + event schema).
+## Production stack
 
-## Reused components (not reinvented)
+Phase 4 ships the infra layer:
+
+- **Postgres backend** — events partitioned by `HASH(session_id)`, LISTEN/NOTIFY, advisory locks, multi-worker heartbeat
+- **sandbox-runtime** — Anthropic's npm sandbox wrapped in Python, with graceful Docker fallback
+- **Infisical Vault** — OAuth flows (GitHub/Slack/Notion), egress proxy, prompt-injection protection
+- **LiteLLM** — Anthropic / OpenAI / Ollama multi-provider, normalized to canonical Wake events
+- **agentgateway** — MCP HTTP egress sidecar
+- **Deploy** — Helm chart + Docker Compose + 5 deploy guides
+
+```bash
+docker compose -f deploy/docker-compose.yml up    # self-host stack
+helm install wake deploy/helm/wake                # kubernetes
+```
+
+## Reuses, doesn't reinvent
 
 | Layer | Component |
 |---|---|
-| OS-level sandbox | [anthropic-experimental/sandbox-runtime](https://github.com/anthropic-experimental/sandbox-runtime) |
-| Vault + egress proxy | [Infisical/agent-vault](https://github.com/Infisical/agent-vault) |
-| Model router | [LiteLLM](https://github.com/BerriAI/litellm) |
-| MCP+A2A gateway | [agentgateway](https://github.com/agentgateway/agentgateway) (Linux Foundation) |
+| OS sandbox | [`anthropic-experimental/sandbox-runtime`](https://github.com/anthropic-experimental/sandbox-runtime) |
+| Vault + proxy | [`Infisical/agent-vault`](https://github.com/Infisical/agent-vault) |
+| Model router | [`LiteLLM`](https://github.com/BerriAI/litellm) |
+| MCP gateway | [`agentgateway`](https://github.com/agentgateway/agentgateway) (Linux Foundation) |
 | Tool protocol | [Model Context Protocol](https://modelcontextprotocol.io/) |
-| Agent definition | [Open Agent Specification](https://github.com/oracle/agent-spec) |
 
-Wake builds: **the spec, the runtime, the adapters.** Everything else plugs in.
+Wake builds the **spec, the runtime, the adapters.** Everything else plugs in.
 
-## Status and contributing
+## Status
 
-This repository is in **design phase**. The docs are the product right now. The bet is that publishing the `HarnessAdapter` ABI and event schema as a stable, community-reviewed open spec — before any code is written — is the right way to establish a standard.
+| Phase | Status |
+|---|---|
+| 0 — Design Lock | ✅ done |
+| 1 — Skeleton (runtime + CLI + SQLite) | ✅ done |
+| 2 — First Adapter (HarnessAdapter ABI + Claude SDK + conformance suite) | ✅ done |
+| 3 — Spec Validation (LangGraph + CrewAI + Pydantic AI adapters, 10/10) | ✅ done |
+| 4 — Production Stack (Postgres + sandbox-runtime + Vault + LiteLLM + deploy) | ✅ done |
+| 5 — Public Launch | ⚪ next |
 
-If you want to help shape Wake before code lands:
+See [`phases/`](./phases/) for detailed progress.
 
-- Read the specs ([SPEC-HARNESS-ADAPTER](./docs/SPEC-HARNESS-ADAPTER.md), [SPEC-EVENT-SCHEMA](./docs/SPEC-EVENT-SCHEMA.md))
-- Open issues with critiques, gaps, or use cases the design fails to cover
-- Argue with the [VISION](./docs/VISION.md) and [COMPARISON](./docs/COMPARISON.md)
+## Docs
 
-A formal `CONTRIBUTING.md` and RFC process will land before any code does.
+Start with:
+
+- [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) — how Wake works technically
+- [`docs/SPEC-HARNESS-ADAPTER.md`](./docs/SPEC-HARNESS-ADAPTER.md) — the ABI, locked v0.1.0
+- [`docs/SPEC-EVENT-SCHEMA.md`](./docs/SPEC-EVENT-SCHEMA.md) — canonical event log, locked v0.1.0
+- [`docs/WRITING-AN-ADAPTER.md`](./docs/WRITING-AN-ADAPTER.md) — port your framework
+
+Full index in [`docs/README.md`](./docs/README.md).
+
+## Contributing
+
+RFC-driven. Open an issue tagged `rfc` for spec changes, `bug` for defects, `feature` for proposals. Templates in [`.github/ISSUE_TEMPLATE/`](./.github/ISSUE_TEMPLATE/). See [`CONTRIBUTING.md`](./CONTRIBUTING.md).
 
 ## License
 
-To be decided around Day-30 based on input from potential enterprise users. Most likely **MIT** or **Apache 2.0**.
-
----
-
-## The one-paragraph pitch
-
-The agent infra layer is becoming commodity. Sandboxes (E2B, sandbox-runtime), vaults (Infisical), model routers (LiteLLM), durable execution (Temporal, Restate), memory (Letta, Mem0), and observability (Langfuse, Phoenix) are all mature OSS. What is missing is **the seam** — a runtime substrate that stitches these together with an open contract that any agent framework can implement. Wake is that seam: an append-only event log as the source of truth, a stateless harness defined by the `HarnessAdapter` ABI, a sandbox invoked as a tool, and credentials handled by a vault the harness never touches. Bring LangGraph, CrewAI, Pydantic AI, the Claude Agent SDK, or your own loop — they all run on the same substrate. Self-host. Replay deterministically. Audit every action. No billing, no lock-in.
+Apache 2.0 — see [`LICENSE`](./LICENSE).
