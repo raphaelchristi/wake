@@ -63,7 +63,7 @@ def _ok(text: str) -> ToolResult:
     return ToolResult(content=[TextBlock(text=text)], is_error=False)
 
 
-class SandboxRuntimeAdapter(SandboxAdapter):  # type: ignore[misc]
+class SandboxRuntimeAdapter(SandboxAdapter):
     """Wrap @anthropic-ai/sandbox-runtime as a Wake :class:`SandboxAdapter`.
 
     Args:
