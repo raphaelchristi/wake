@@ -26,6 +26,25 @@ type CallbackState =
  * context while the round-trip is in flight.
  */
 export default function OAuthCallbackPage() {
+  return (
+    <React.Suspense
+      fallback={
+        <div className="mx-auto flex max-w-lg flex-col gap-6 p-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>OAuth callback</CardTitle>
+              <CardDescription>Loading…</CardDescription>
+            </CardHeader>
+          </Card>
+        </div>
+      }
+    >
+      <OAuthCallbackInner />
+    </React.Suspense>
+  );
+}
+
+function OAuthCallbackInner() {
   const params = useSearchParams();
   const router = useRouter();
   const [state, setState] = React.useState<CallbackState>({ kind: "idle" });
