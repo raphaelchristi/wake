@@ -8,8 +8,34 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-const BACKEND_BASE =
-  process.env.NEXT_PUBLIC_WAKE_API_BASE ?? "http://localhost:8080";
+/**
+ * Resolve the backend URL for the server-side OAuth callback proxy.
+ *
+ * Order of precedence (Phase 5.1 canon):
+ *   1. `WAKE_API_URL`              — server-side, in-cluster Service URL
+ *   2. `NEXT_PUBLIC_WAKE_API_BASE` — browser-facing public base, used as
+ *                                    a fallback for single-host dev
+ *   3. throw                       — production deploys MUST set at least
+ *                                    one; no silent localhost fallback so
+ *                                    the misconfiguration surfaces loudly.
+ *
+ * The `localhost:8080` default is preserved ONLY when running in
+ * development (NODE_ENV !== "production"); otherwise we fail the
+ * request with a clear error.
+ */
+function resolveBackendBase(): string {
+  const serverSide = process.env.WAKE_API_URL?.trim();
+  if (serverSide) return serverSide;
+  const browserBase = process.env.NEXT_PUBLIC_WAKE_API_BASE?.trim();
+  if (browserBase) return browserBase;
+  if (process.env.NODE_ENV !== "production") {
+    return "http://localhost:8080";
+  }
+  throw new Error(
+    "OAuth callback proxy misconfigured: set WAKE_API_URL (preferred, " +
+      "server-side, in-cluster) or NEXT_PUBLIC_WAKE_API_BASE.",
+  );
+}
 
 export const runtime = "nodejs";
 
@@ -30,7 +56,18 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const url = new URL("/v1/vault/oauth/callback", BACKEND_BASE);
+  let url: URL;
+  try {
+    url = new URL("/v1/vault/oauth/callback", resolveBackendBase());
+  } catch (err) {
+    return NextResponse.json(
+      {
+        error:
+          err instanceof Error ? err.message : "backend base url unresolved",
+      },
+      { status: 500 },
+    );
+  }
   url.searchParams.set("code", body.code);
   url.searchParams.set("state", body.state);
 
