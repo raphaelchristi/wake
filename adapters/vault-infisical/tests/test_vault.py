@@ -117,3 +117,63 @@ async def test_create_factory_returns_in_memory_when_no_token(monkeypatch: pytes
 
     vault = create()
     assert vault.memory_backend is not None
+
+
+# ---------------------------------------------------------------------------
+# replace (rotate) semantics
+# ---------------------------------------------------------------------------
+
+
+async def test_replace_revokes_old_and_returns_new(vault: InfisicalVault) -> None:
+    old = await vault.add(name="gh", provider="github", value="old-token", scopes=["repo"])
+    new = await vault.replace(old.vault_id, value="new-token")
+
+    # New entry exists, old is gone.
+    assert new.vault_id != old.vault_id
+    assert new.name == "gh"
+    assert new.provider == "github"
+    assert new.scopes == ["repo"]
+    # Old metadata bridges via "rotated_from".
+    assert new.metadata.get("rotated_from") == old.vault_id
+
+    with pytest.raises(VaultNotFoundError):
+        await vault.get_metadata(old.vault_id)
+    # New is listed.
+    items = await vault.list()
+    assert any(i.vault_id == new.vault_id for i in items)
+
+
+async def test_replace_proxy_token_after_rotate_uses_new_value(
+    vault: InfisicalVault,
+) -> None:
+    old = await vault.add(name="gh", provider="github", value="old")
+    new = await vault.replace(old.vault_id, value="brand-new")
+    # Old proxy tokens for the old vault_id should not resolve anymore.
+    assert vault.memory_backend is not None
+    new_proxy = await vault.get_proxy_token(new.vault_id, session_id="s")
+    resolved = vault.memory_backend.resolve_proxy_token(new_proxy)
+    assert resolved == "brand-new"
+
+
+async def test_replace_handles_missing_old_gracefully(vault: InfisicalVault) -> None:
+    # No prior credential at this id — replace still succeeds and adds.
+    new = await vault.replace(
+        "vault_does_not_exist",
+        value="v",
+        name="recovered",
+        provider="custom",
+    )
+    assert new.name == "recovered"
+    assert new.metadata.get("rotated_from") == "vault_does_not_exist"
+
+
+async def test_replace_caller_overrides_win(vault: InfisicalVault) -> None:
+    old = await vault.add(name="gh", provider="github", value="v", scopes=["repo"])
+    new = await vault.replace(
+        old.vault_id,
+        value="v2",
+        name="gh_renamed",
+        scopes=["repo", "read:user"],
+    )
+    assert new.name == "gh_renamed"
+    assert new.scopes == ["repo", "read:user"]
