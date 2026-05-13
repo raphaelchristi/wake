@@ -1,4 +1,4 @@
-# ruff: noqa: A002, TC001
+# ruff: noqa: A002, TC001, TC003
 """Tool registry: register tools and dispatch executions.
 
 The registry is the harness's view of "what tools can I call?". Each Wake
