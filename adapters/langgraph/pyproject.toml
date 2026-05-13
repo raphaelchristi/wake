@@ -1,0 +1,54 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "wake-adapter-langgraph"
+# PEP 440 forbids "0.1.0-stub"; the adapter's runtime `version` attribute
+# still reads "0.1.0-stub" — that's the value other tooling reports.
+version = "0.1.0a0"
+description = "Wake HarnessAdapter for LangGraph StateGraphs (Phase 2 stub)."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+authors = [
+    { name = "Wake contributors" },
+]
+keywords = ["wake", "langgraph", "agents", "adapter", "harness"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries",
+]
+dependencies = [
+    "wake-ai>=0.0.1",
+    "python-ulid>=3.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+]
+
+[project.entry-points."wake.adapters"]
+langgraph = "wake_adapter_langgraph.adapter:create"
+
+[project.urls]
+Homepage = "https://github.com/raphaelchristi/wake"
+Repository = "https://github.com/raphaelchristi/wake"
+Issues = "https://github.com/raphaelchristi/wake/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/wake_adapter_langgraph"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+# importlib avoids collision when this `tests/` package is collected
+# alongside another adapter's `tests/` package from the monorepo root.
+addopts = "--import-mode=importlib"
