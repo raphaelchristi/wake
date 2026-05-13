@@ -12,6 +12,7 @@ secret is in the vault, the adapter holds only metadata.
 
 from __future__ import annotations
 
+import builtins
 import os
 from datetime import UTC, datetime
 from typing import Any
@@ -329,7 +330,7 @@ class InfisicalVault(VaultAdapter):
         *,
         name: str | None = None,
         provider: ProviderName | str | None = None,
-        scopes: list[str] | None = None,
+        scopes: builtins.list[str] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> CredentialMetadata:
         """Replace ``vault_id``'s secret with ``value`` (rotate).
