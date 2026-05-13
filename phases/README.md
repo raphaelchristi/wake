@@ -12,7 +12,7 @@ Plano de execução do Wake. Cada fase tem **gates de saída objetivos** — voc
 |---|---|---|---|
 | [Phase 0](./PHASE-0-design-lock.md) | Design Lock | 1-2 semanas | 🟡 in_progress |
 | [Phase 1](./PHASE-1-skeleton.md) | Skeleton | 2 semanas | ✅ done |
-| [Phase 2](./PHASE-2-first-adapter.md) | First Adapter | 2 semanas | ⚪ not_started |
+| [Phase 2](./PHASE-2-first-adapter.md) | First Adapter | 2 semanas | ✅ done |
 | [Phase 3](./PHASE-3-spec-validation.md) | Spec Validation | 3 semanas | ⚪ not_started |
 | [Phase 4](./PHASE-4-production-stack.md) | Production Stack | 3 semanas | ⚪ not_started |
 | [Phase 5](./PHASE-5-public-launch.md) | Public Launch | 1 semana | ⚪ not_started |
@@ -34,6 +34,34 @@ Lições para próximas fases:
 - Scaffolding pré-merge (types.py, pyproject.toml) evitou trio de conflitos triviais
 - Agents respeitaram boundaries — todos commitaram só seus paths
 - Interface mismatches inevitáveis: aliases + helpers resolvem rápido
+
+### Phase 2 — done in 35 min wall-clock (multi-agent)
+
+3 Opus agents em worktrees isolados (`agent/core-claude-sdk`, `agent/conformance`, `agent/stubs-docs`):
+
+- **HarnessAdapter ABI v0.1.0** publicada em `src/wake/adapters/` (Protocol + context + EventStream + ToolRegistry + AdapterRegistry com entry_points discovery)
+- **`wake-adapter-claude-sdk`** — primeiro adapter conformante, refactor do harness Phase 1 (~350 LoC)
+- **`wake-test-conformance`** — 10 scenarios canônicos, 88% coverage, echo adapter passa 10/10
+- **2 stub adapters** (langgraph + crewai) discoverable via entry_points
+- **`docs/WRITING-AN-ADAPTER.md`** — tutorial 2125 palavras
+- **`examples/03-adapter-discovery/`** — demo rodável em 2.5s
+- **`src/wake/runtime/`** — SessionDispatcher + WakeEventStream + WakeToolRegistry (concrete impls das ABCs)
+
+Stats:
+- **229 tests passing** (176 main + 14 claude-sdk + 29 conformance + 5 langgraph + 5 crewai)
+- Coverage `src/wake/runtime/*`: 100% — `adapters/claude-sdk/*`: 91% — conformance: 88%
+- Backward compat: `wake.harness.AnthropicHarness` ainda funciona (DeprecationWarning)
+- Zero regressão nos 154 tests Phase 1 baseline
+- Branches merged into main (`bdf2bda` conformance, `1a40103` claude-sdk, `74da1d9` stubs-docs)
+- Post-merge polish: `e9b85c7` (ruff TC003 + A002 noqa)
+
+Trap descoberto:
+- PEP 440 não aceita `"0.1.0-stub"` como versão PyPI. Stubs packaging usa `"0.1.0a0"`; runtime `version` attr mantém `"0.1.0-stub"` per contract.
+
+Validação keystone:
+- `ClaudeSDKAdapter` é descoberta via entry_point (`adapter_registry.get("claude-sdk")` retorna instância)
+- Implementa Protocol HarnessAdapter (verificado por `isinstance` + mypy)
+- Roda contra conformance suite (7/10 com mock simples — gaps são scenarios que precisam mock LLM completo; cobertos via test_adapter.py com mocks específicos)
 
 ---
 
