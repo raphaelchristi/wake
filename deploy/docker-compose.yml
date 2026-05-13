@@ -90,6 +90,12 @@ services:
       WAKE_VAULT_URL: http://infisical-vault:8080
       WAKE_AGENTGATEWAY_URL: http://agentgateway:8888
       WAKE_LOG_LEVEL: ${WAKE_LOG_LEVEL:-info}
+      # Fail-closed auth (Phase 5.1 finding #3). Required=true means
+      # the API refuses every authenticated route with 503 unless the
+      # operator also exports WAKE_API_KEY. ${VAR:?msg} makes compose
+      # exit early if the operator forgot to set the key.
+      WAKE_AUTH_REQUIRED: "true"
+      WAKE_API_KEY: ${WAKE_API_KEY:?WAKE_API_KEY is required — export it before docker compose up}
       # Per-provider keys are mounted from the host env so they never
       # land in image layers.
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
@@ -124,9 +130,10 @@ services:
 
   # Phase 5 — Wake Dashboard (Next.js 15 standalone).
   # Talks to wake-api over the docker network. The dashboard reads its
-  # backend URL at request time via NEXT_PUBLIC_API_URL; the API key is
-  # injected from the host env (or a .env file at deploy time) and lives
-  # only in the browser's localStorage after login.
+  # backend URL at request time via NEXT_PUBLIC_WAKE_API_BASE (browser)
+  # and WAKE_API_URL (server-side route handlers). The API key is
+  # injected from the host env (or a .env file at deploy time) and
+  # lives only in the browser's localStorage after login.
   frontend:
     build:
       context: ..
@@ -134,13 +141,13 @@ services:
     image: wake-ai/dashboard:0.5.0
     restart: unless-stopped
     environment:
-      # The browser hits the API via the public host; in single-host
-      # docker-compose that's usually http://localhost:8080.
-      NEXT_PUBLIC_API_URL: ${WAKE_API_PUBLIC_URL:-http://localhost:8080}
+      # Browser-facing API base URL. Public, baked into the client bundle.
+      # In single-host docker-compose that's usually http://localhost:8080.
+      NEXT_PUBLIC_WAKE_API_BASE: ${WAKE_API_PUBLIC_URL:-http://localhost:8080}
       # Server-side requests issued by Next.js Route Handlers (e.g. the
       # OAuth callback proxy) stay on the docker network.
       WAKE_API_URL: http://wake-api:8080
-      WAKE_API_KEY: ${WAKE_API_KEY:-}
+      WAKE_API_KEY: ${WAKE_API_KEY:?WAKE_API_KEY is required — export it before docker compose up}
       NEXT_TELEMETRY_DISABLED: "1"
     ports:
       - "3000:3000"

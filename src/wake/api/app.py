@@ -22,7 +22,13 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from wake import __version__
-from wake.api.dependencies import AppState, verify_api_key
+from wake.api.dependencies import (
+    WAKE_API_KEY_ENV,
+    AppState,
+    _auth_required_flag,
+    is_under_pytest,
+    verify_api_key,
+)
 from wake.api.routes import agents as agents_routes
 from wake.api.routes import environments as environments_routes
 from wake.api.routes import events as events_routes
@@ -72,6 +78,30 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.info("wake_api_starting", version=__version__)
+        # Warn if the API is going to accept everything because no key is
+        # configured AND fail-closed mode is off. Production deploys MUST
+        # set ``WAKE_AUTH_REQUIRED=true`` so an unset ``WAKE_API_KEY``
+        # surfaces as 503 instead of a silent fail-open.
+        key_set = bool(os.environ.get(WAKE_API_KEY_ENV, "").strip())
+        required = _auth_required_flag()
+        if not key_set and not required and not is_under_pytest():
+            logger.warning(
+                "wake_auth_disabled",
+                detail=(
+                    "WAKE_API_KEY is unset and WAKE_AUTH_REQUIRED is not "
+                    "enabled — the API will accept unauthenticated "
+                    "requests. Set WAKE_AUTH_REQUIRED=true to fail closed "
+                    "or set WAKE_API_KEY to enforce auth."
+                ),
+            )
+        elif not key_set and required:
+            logger.warning(
+                "wake_auth_required_no_key",
+                detail=(
+                    "WAKE_AUTH_REQUIRED=true but WAKE_API_KEY is unset — "
+                    "all authenticated routes will return 503."
+                ),
+            )
         yield
         logger.info("wake_api_shutting_down")
         state: AppState = app.state.wake

@@ -10,9 +10,16 @@
 #
 # Run:
 #   docker run --rm -p 3000:3000 \
-#     -e NEXT_PUBLIC_API_URL=http://localhost:8080 \
+#     -e NEXT_PUBLIC_WAKE_API_BASE=http://localhost:8080 \
+#     -e WAKE_API_URL=http://wake-api:8080 \
 #     -e WAKE_API_KEY=<your-key> \
 #     wake-ai/dashboard:0.5.0
+#
+# Env var canon (Phase 5.1):
+#   * NEXT_PUBLIC_WAKE_API_BASE — browser-facing, baked into the bundle.
+#   * WAKE_API_URL              — server-side route handlers (OAuth proxy).
+#   * WAKE_API_KEY              — server-side; used by the OAuth callback
+#                                  relay so the key never leaks to the browser.
 #
 # Notes:
 # * The Next.js config in frontend/next.config.mjs MUST have

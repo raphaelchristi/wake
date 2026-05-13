@@ -20,9 +20,39 @@ import type {
   SessionListQuery,
 } from "./types";
 
-const DEFAULT_BASE =
-  (typeof process !== "undefined" && process.env.NEXT_PUBLIC_WAKE_API_BASE) ||
-  "http://localhost:8080";
+/**
+ * Resolve the browser-side API base URL.
+ *
+ * Canonical (Phase 5.1): `NEXT_PUBLIC_WAKE_API_BASE`.
+ *
+ * Legacy `NEXT_PUBLIC_API_URL` is accepted for one transition release
+ * with a runtime `console.warn`. It will be removed in v0.6. Any
+ * deploy that still relies on it must rename the env var.
+ */
+function resolveDefaultBase(): string {
+  if (typeof process === "undefined") return "http://localhost:8080";
+  const canon = process.env.NEXT_PUBLIC_WAKE_API_BASE;
+  if (canon) return canon;
+  const legacy = process.env.NEXT_PUBLIC_API_URL;
+  if (legacy) {
+    // Hint operators upgrading from the pre-5.1 chart. We only warn
+    // once per process — Next.js may re-evaluate this module across
+    // RSC boundaries so we stash a flag on globalThis.
+    const g = globalThis as { __wakeApiBaseDeprecationWarned?: boolean };
+    if (!g.__wakeApiBaseDeprecationWarned) {
+      g.__wakeApiBaseDeprecationWarned = true;
+      // eslint-disable-next-line no-console
+      console.warn(
+        "[wake] DEPRECATED: NEXT_PUBLIC_API_URL is no longer supported; " +
+          "use NEXT_PUBLIC_WAKE_API_BASE. Legacy fallback will be removed in v0.6.",
+      );
+    }
+    return legacy;
+  }
+  return "http://localhost:8080";
+}
+
+const DEFAULT_BASE = resolveDefaultBase();
 
 export class WakeApiError extends Error {
   readonly status: number;
