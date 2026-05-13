@@ -1,0 +1,101 @@
+# wake-adapter-langgraph
+
+> **Phase 2 STUB.** This package proves Wake's `HarnessAdapter` ABI is
+> discoverable and plug-and-play. It does **not** yet run LangGraph
+> `StateGraph`s. A real implementation lands in Phase 3
+> ([phases/PHASE-3-spec-validation.md](../../phases/PHASE-3-spec-validation.md)).
+
+A [Wake](https://github.com/raphaelchristi/wake) `HarnessAdapter`
+that — eventually — will let any
+[LangGraph](https://github.com/langchain-ai/langgraph) `StateGraph` run
+on top of Wake's durable substrate (event log, sandbox, vault, lifecycle).
+
+## What this stub does today
+
+- Registers itself under the `wake.adapters` Python entry point as
+  `langgraph`, so `AdapterRegistry.discover()` finds it.
+- Implements the `HarnessAdapter` Protocol (`name`, `version`,
+  `compatibility`, `step()`, `on_lifecycle()`).
+- `step()` emits a single canned `assistant.message` event with text
+  `"stub from langgraph"` — independent of input.
+- `on_lifecycle()` is a no-op.
+
+That's the entire feature set. **It is a wiring proof, not a framework
+integration.**
+
+## Install
+
+From the Wake monorepo (editable, recommended while pre-alpha):
+
+```bash
+cd adapters/langgraph
+pip install -e .
+```
+
+From a release wheel (once published):
+
+```bash
+pip install wake-adapter-langgraph
+```
+
+## Use
+
+```python
+from wake.adapters import AdapterRegistry
+
+registry = AdapterRegistry()
+registry.discover()  # reads the wake.adapters entry-point group
+
+adapter = registry.get("langgraph")
+assert adapter.name == "langgraph"
+assert adapter.version == "0.1.0-stub"
+```
+
+Or with the Wake CLI (once your runtime is configured to allow stubs):
+
+```bash
+wake session create --agent my-agent --harness langgraph
+```
+
+The runtime will route `step()` calls to this adapter and persist the
+single emitted event — useful for end-to-end smoke tests of the
+adapter dispatch path.
+
+## Run the tests
+
+```bash
+cd adapters/langgraph
+pip install -e ".[dev]"
+pytest -v
+```
+
+Five tests, all fast:
+
+- package imports
+- runtime `isinstance(adapter, HarnessAdapter)`
+- entry point discovered by `AdapterRegistry`
+- `step()` emits exactly one `assistant.message`
+- `on_lifecycle()` is a no-op for every event
+
+## Plan for the full implementation (Phase 3)
+
+The Phase 3 adapter will:
+
+1. Accept a compiled `langgraph.graph.StateGraph` via the constructor,
+   plus a `state_key` mapping messages → graph state.
+2. Translate Wake events (`user.message`, `tool_result`) into LangChain
+   `BaseMessage` objects to seed graph state.
+3. Stream graph supersteps; for each new message emitted, translate
+   back into a Wake event (`assistant.delta`, `assistant.message`,
+   `tool_use`).
+4. Wrap LangGraph's tool node so all tool calls route through
+   `tools.execute(name, input, tool_use_id=...)` — never the underlying
+   function directly.
+5. Pass the full `wake-test-conformance` suite (10 scenarios).
+
+Track the work in
+[`phases/PHASE-3-spec-validation.md`](../../phases/PHASE-3-spec-validation.md).
+
+## License
+
+Apache-2.0, same as Wake core.
