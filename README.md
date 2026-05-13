@@ -2,18 +2,15 @@
   <img src="docs/assets/banner.png" alt="Wake — Durable runtime substrate for AI agents" width="900">
 </p>
 
-<h1 align="center">Wake</h1>
-
-<p align="center">
-  <em>Durable runtime substrate for AI agents.</em><br>
-  Bring your framework, your model, your tools. Wake handles event log, sandbox, vault and lifecycle.
-</p>
-
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="Apache 2.0"></a>
   <img src="https://img.shields.io/badge/python-3.11%2B-blue.svg" alt="Python 3.11+">
   <img src="https://img.shields.io/badge/status-alpha-orange.svg" alt="alpha">
   <a href="https://github.com/raphaelchristi/wake/releases/tag/v0.4.0-production"><img src="https://img.shields.io/badge/version-v0.4.0--production-green.svg" alt="v0.4.0"></a>
+</p>
+
+<p align="center">
+  Bring your framework, your model, your tools. Wake handles event log, sandbox, vault and lifecycle.
 </p>
 
 ---
