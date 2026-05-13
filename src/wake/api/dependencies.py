@@ -132,7 +132,19 @@ def get_vault(request: Request) -> object:
 
 # Environment variables consulted by ``verify_api_key``.
 WAKE_API_KEY_ENV = "WAKE_API_KEY"
+WAKE_AUTH_REQUIRED_ENV = "WAKE_AUTH_REQUIRED"
 WAKE_API_KEY_HEADER = "X-Wake-API-Key"
+
+
+def _auth_required_flag() -> bool:
+    """Return True when the operator opted into fail-closed auth."""
+    raw = os.environ.get(WAKE_AUTH_REQUIRED_ENV, "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def is_under_pytest() -> bool:
+    """Detect a running pytest process — used to silence the startup warning."""
+    return bool(os.environ.get("PYTEST_CURRENT_TEST")) or "PYTEST_VERSION" in os.environ
 
 
 async def verify_api_key(
@@ -140,20 +152,32 @@ async def verify_api_key(
 ) -> None:
     """Reject requests that don't carry a valid Wake API key.
 
-    Behaviour:
+    Behaviour (canonical auth modes — see PHASE-5.1-CONTRACT.md):
 
-    * If ``WAKE_API_KEY`` is unset (or empty) the dependency is a no-op — this
-      keeps local-dev ergonomics intact and matches how the CLI bootstraps
-      a fresh install.
-    * Otherwise the request must include the ``X-Wake-API-Key`` header set to
-      that value. We compare in constant time to avoid timing oracles.
-    * The dependency is mounted at app-level via ``include_router`` so any
-      route can be exempted by listing it in ``EXEMPT_AUTH_PATHS`` (e.g.
-      ``/health`` and the OpenAPI/Swagger surface).
+    * ``WAKE_API_KEY`` unset AND ``WAKE_AUTH_REQUIRED`` unset/false → no-op.
+      Preserves zero-friction dev mode.
+    * ``WAKE_API_KEY=<key>`` (regardless of ``WAKE_AUTH_REQUIRED``) → the
+      ``X-Wake-API-Key`` header must equal ``<key>``. Constant-time compare.
+    * ``WAKE_AUTH_REQUIRED=true`` AND ``WAKE_API_KEY`` unset → fail-closed:
+      every authenticated request returns 503 ``auth required but not
+      configured``. Prevents the production fail-open footgun where the
+      operator forgets to inject the key Secret.
+
+    The dependency is mounted at app-level via ``include_router`` so the
+    unauthenticated surface (``/health``, ``/docs``, ``/redoc``,
+    ``/openapi.json``) is unaffected.
     """
     expected = os.environ.get(WAKE_API_KEY_ENV, "").strip()
+    auth_required = _auth_required_flag()
+
     if not expected:
+        if auth_required:
+            raise HTTPException(
+                status_code=503,
+                detail="auth required but not configured",
+            )
         return
+
     provided = (x_wake_api_key or "").strip()
     if not provided:
         raise HTTPException(status_code=401, detail="missing api key")
