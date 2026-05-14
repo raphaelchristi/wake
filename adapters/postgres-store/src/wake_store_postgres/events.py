@@ -20,12 +20,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from collections.abc import AsyncIterator
+from datetime import datetime
 from typing import Any
 
 import structlog
-from sqlalchemy import func, select, text
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
-from wake.store.base import EventStore
+from wake.store.base import EventStore, PurgeResult
 from wake.tenancy import DEFAULT_ORGANIZATION_ID, DEFAULT_WORKSPACE_ID
 from wake.types import Event, EventType
 
@@ -269,6 +270,103 @@ class PostgresEventStore(EventStore):
                 stmt = stmt.where(EventRow.workspace_id == workspace_id)
             n = await s.scalar(stmt)
         return int(n or 0)
+
+    # ------------------------------------------------------------------
+    # Retention helpers (Phase 7 — gap #5)
+    # ------------------------------------------------------------------
+
+    async def _delete_events(
+        self,
+        event_ids: list[str],
+        *,
+        workspace_id: str | None = None,
+    ) -> int:
+        if not event_ids:
+            return 0
+        async with self._sessionmaker() as s, s.begin():
+            stmt = delete(EventRow).where(EventRow.id.in_(event_ids))
+            if workspace_id is not None:
+                stmt = stmt.where(EventRow.workspace_id == workspace_id)
+            result = await s.execute(stmt)
+        return int(result.rowcount or 0)
+
+    async def iter_for_archive(
+        self,
+        cutoff: datetime,
+        *,
+        workspace_id: str | None = None,
+        batch_size: int = 1000,
+    ) -> AsyncIterator[list[Event]]:
+        return self._iter_for_archive_impl(
+            cutoff, workspace_id=workspace_id, batch_size=batch_size
+        )
+
+    async def _iter_for_archive_impl(
+        self,
+        cutoff: datetime,
+        *,
+        workspace_id: str | None,
+        batch_size: int,
+    ) -> AsyncIterator[list[Event]]:
+        offset = 0
+        while True:
+            async with self._sessionmaker() as s:
+                stmt = (
+                    select(EventRow)
+                    .where(EventRow.created_at < cutoff)
+                    .order_by(EventRow.session_id, EventRow.seq)
+                    .limit(batch_size)
+                    .offset(offset)
+                )
+                if workspace_id is not None:
+                    stmt = stmt.where(EventRow.workspace_id == workspace_id)
+                rows = (await s.execute(stmt)).scalars().all()
+            if not rows:
+                return
+            yield [_row_to_event(r) for r in rows]
+            if len(rows) < batch_size:
+                return
+            offset += len(rows)
+
+    async def purge_before(
+        self,
+        cutoff: datetime,
+        *,
+        workspace_id: str | None = None,
+        dry_run: bool = False,
+        batch_size: int = 1000,
+    ) -> PurgeResult:
+        async with self._sessionmaker() as s:
+            count_stmt = select(func.count()).select_from(EventRow).where(
+                EventRow.created_at < cutoff
+            )
+            if workspace_id is not None:
+                count_stmt = count_stmt.where(EventRow.workspace_id == workspace_id)
+            total = int(await s.scalar(count_stmt) or 0)
+        if dry_run or total == 0:
+            return PurgeResult(deleted=total, dry_run=dry_run)
+        deleted = 0
+        while deleted < total:
+            async with self._sessionmaker() as s, s.begin():
+                # Postgres supports DELETE ... USING but with hash
+                # partitioning we just use a CTE: select ids first,
+                # delete by id-in. Keeps the plan obvious + portable.
+                id_stmt = (
+                    select(EventRow.id)
+                    .where(EventRow.created_at < cutoff)
+                    .limit(batch_size)
+                )
+                if workspace_id is not None:
+                    id_stmt = id_stmt.where(EventRow.workspace_id == workspace_id)
+                ids = (await s.execute(id_stmt)).scalars().all()
+                if not ids:
+                    break
+                del_stmt = delete(EventRow).where(EventRow.id.in_(list(ids)))
+                if workspace_id is not None:
+                    del_stmt = del_stmt.where(EventRow.workspace_id == workspace_id)
+                result = await s.execute(del_stmt)
+                deleted += int(result.rowcount or 0)
+        return PurgeResult(deleted=deleted, dry_run=False)
 
 
 __all__ = ["PostgresEventStore"]

@@ -24,6 +24,8 @@ from __future__ import annotations
 import builtins
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from wake.rbac import Role, User
@@ -41,6 +43,42 @@ from wake.types import (
 
 class StoreError(Exception):
     """Base class for storage-layer errors."""
+
+
+# ---------------------------------------------------------------------------
+# Retention helpers (Phase 7 — gap #5)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class CompactResult:
+    """Outcome of ``EventStore.compact_session``.
+
+    The store coalesces a contiguous run of ``assistant.delta`` events
+    into a single ``assistant.message`` snapshot and deletes the
+    original deltas. The snapshot preserves replay determinism via the
+    standard ``EventLog.events_to_messages`` projection.
+    """
+
+    session_id: str
+    deltas_removed: int
+    snapshots_emitted: int
+
+
+@dataclass(frozen=True)
+class ArchiveBatch:
+    """A batch of events selected for archive (cold-storage export)."""
+
+    events: list[Event]
+    cutoff: datetime
+
+
+@dataclass(frozen=True)
+class PurgeResult:
+    """Outcome of ``EventStore.purge_before`` — events deleted, run."""
+
+    deleted: int
+    dry_run: bool
 
 
 # ---------------------------------------------------------------------------
@@ -107,6 +145,153 @@ class EventStore(ABC):
     @abstractmethod
     async def count(self, session_id: str, *, workspace_id: str | None = None) -> int:
         """Return total number of events on the session."""
+
+    # ------------------------------------------------------------------
+    # Retention helpers (Phase 7 — gap #5)
+    # ------------------------------------------------------------------
+
+    async def compact_session(
+        self,
+        session_id: str,
+        *,
+        workspace_id: str | None = None,
+    ) -> CompactResult:
+        """Coalesce contiguous ``assistant.delta`` runs into snapshots.
+
+        For each maximal contiguous run of ``assistant.delta`` events
+        in the session, emit one ``assistant.message`` snapshot
+        capturing the concatenated text and then delete the deltas. The
+        snapshot's ``metadata`` records the coalesced delta count and
+        the seq range so audit trails stay forensic.
+
+        Subclasses MAY override for backend-specific batching; the
+        default implementation is sufficient and runs against the
+        public ``append`` / ``get`` API only. Backends that override
+        MUST preserve:
+
+        * append-only semantics for events that survive
+        * the original ``seq`` of the first delta in the run as the
+          ``meta["snapshot_of_seq_start"]`` field
+        * the ``EventLog.events_to_messages`` projection — replaying
+          a compacted log MUST yield the same Anthropic Messages list
+          as the original (minus the deltas, which never enter the
+          projection anyway)
+
+        Idempotent: a session that has already been compacted (no
+        ``assistant.delta`` events left) returns ``deltas_removed=0``.
+        """
+        events = await self.get(session_id, workspace_id=workspace_id)
+        runs: list[list[Event]] = []
+        current: list[Event] = []
+        for ev in events:
+            if ev.type == "assistant.delta":
+                current.append(ev)
+            else:
+                if current:
+                    runs.append(current)
+                    current = []
+        if current:
+            runs.append(current)
+        if not runs:
+            return CompactResult(
+                session_id=session_id, deltas_removed=0, snapshots_emitted=0
+            )
+
+        deltas_removed = 0
+        snapshots_emitted = 0
+        for run in runs:
+            text_parts: list[str] = []
+            for ev in run:
+                # Adapters tag delta text either as ``payload["text"]``
+                # or as concatenated ``payload["content"]`` blocks. Pick
+                # whichever is present; default to empty string.
+                txt = ev.payload.get("text") if isinstance(ev.payload, dict) else None
+                if txt is None and isinstance(ev.payload, dict):
+                    blocks = ev.payload.get("content")
+                    if isinstance(blocks, list):
+                        for b in blocks:
+                            if isinstance(b, dict) and b.get("type") == "text":
+                                txt = (txt or "") + str(b.get("text", ""))
+                if txt is None:
+                    txt = ""
+                text_parts.append(str(txt))
+            concatenated = "".join(text_parts)
+            first = run[0]
+            last = run[-1]
+            await self.append(
+                session_id,
+                "assistant.message",
+                {
+                    "content": [{"type": "text", "text": concatenated}],
+                    "stop_reason": "end_turn",
+                },
+                metadata={
+                    "compacted": True,
+                    "deltas_removed": len(run),
+                    "snapshot_of_seq_start": first.seq,
+                    "snapshot_of_seq_end": last.seq,
+                },
+                organization_id=first.organization_id,
+                workspace_id=first.workspace_id,
+            )
+            snapshots_emitted += 1
+            await self._delete_events(
+                [ev.id for ev in run], workspace_id=workspace_id
+            )
+            deltas_removed += len(run)
+        return CompactResult(
+            session_id=session_id,
+            deltas_removed=deltas_removed,
+            snapshots_emitted=snapshots_emitted,
+        )
+
+    @abstractmethod
+    async def _delete_events(
+        self,
+        event_ids: list[str],
+        *,
+        workspace_id: str | None = None,
+    ) -> int:
+        """Delete the given event ids. Returns rows deleted.
+
+        Internal helper for compact / archive flows. NEVER expose this
+        to API callers — it breaks the append-only invariant.
+        """
+
+    @abstractmethod
+    async def iter_for_archive(
+        self,
+        cutoff: datetime,
+        *,
+        workspace_id: str | None = None,
+        batch_size: int = 1000,
+    ) -> AsyncIterator[list[Event]]:
+        """Yield batches of events with ``created_at < cutoff``.
+
+        Used by ``wake events archive`` to stream cold-data out to S3
+        without loading the whole table. Implementations MUST yield
+        events ordered by (session_id, seq) so the produced JSONL file
+        is replay-friendly.
+        """
+        # Concrete implementations are async generators; this stub
+        # signals the shape and lets mypy understand the awaitable+
+        # AsyncIterator surface.
+
+    @abstractmethod
+    async def purge_before(
+        self,
+        cutoff: datetime,
+        *,
+        workspace_id: str | None = None,
+        dry_run: bool = False,
+        batch_size: int = 1000,
+    ) -> PurgeResult:
+        """Delete events older than ``cutoff`` in batches.
+
+        ``dry_run`` returns the prospective count without writing.
+        Implementations MUST commit in bounded batches so a 10M-row
+        purge doesn't take a long transactional lock.
+        """
 
 
 # ---------------------------------------------------------------------------

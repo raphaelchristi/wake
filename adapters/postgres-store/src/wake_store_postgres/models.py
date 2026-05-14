@@ -179,10 +179,41 @@ class UserRoleRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class ArchiveLogRow(Base):
+    """Audit row produced by ``wake events archive`` (Phase 7 — gap #5).
+
+    Every successful archive batch writes one row recording the cutoff
+    used, the workspace scope, the count + byte size of the JSONL blob
+    and the S3 key it landed under. ``delete_completed_at`` is NULL
+    until the post-upload delete sweeps actually run, so an operator
+    inspecting the table mid-archive can tell which batches uploaded
+    but did not yet purge.
+    """
+
+    __tablename__ = "archive_log"
+
+    id: Mapped[str] = mapped_column(String(26), primary_key=True)
+    workspace_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    cutoff: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    s3_bucket: Mapped[str] = mapped_column(String, nullable=False)
+    s3_key: Mapped[str] = mapped_column(String, nullable=False)
+    s3_etag: Mapped[str | None] = mapped_column(String, nullable=True)
+    session_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    event_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    bytes_uploaded: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    upload_completed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    delete_completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
 __all__ = [
     "Base",
     "AgentRow",
     "AgentVersionRow",
+    "ArchiveLogRow",
     "EnvironmentRow",
     "SessionRow",
     "EventRow",
