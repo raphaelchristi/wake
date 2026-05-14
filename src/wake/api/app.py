@@ -29,6 +29,13 @@ from wake.api.dependencies import (
     is_under_pytest,
     verify_api_key,
 )
+from wake.api.middleware.backpressure import BackpressureMiddleware
+from wake.api.ratelimit import (
+    RateLimitExceededError,
+    build_limiter,
+    rate_limit_dep,
+    rate_limit_exceeded_handler,
+)
 from wake.api.routes import agents as agents_routes
 from wake.api.routes import environments as environments_routes
 from wake.api.routes import events as events_routes
@@ -122,6 +129,19 @@ def create_app(
         lifespan=lifespan,
     )
 
+    # Phase 7 ops-throughput: rate-limit storage backend + exception
+    # handler. The limiter is stashed on ``app.state.limiter`` so the
+    # ``Depends(rate_limit_dep(...))`` calls below can resolve it.
+    app.state.limiter = build_limiter()
+    app.add_exception_handler(RateLimitExceededError, rate_limit_exceeded_handler)  # type: ignore[arg-type]
+
+    # Phase 7 ops-throughput: backpressure middleware injects the
+    # ``X-Wake-Worker-Saturation`` header on every response and
+    # returns 503 + ``Retry-After: 30`` when the dispatcher is
+    # saturated. Mount BEFORE CORS so the saturation header is part
+    # of the response that CORS preflight observes.
+    app.add_middleware(BackpressureMiddleware)
+
     # CORS — the Wake Dashboard runs on :3000 in dev and at a configurable
     # origin in production. ``WAKE_API_CORS_ORIGINS`` accepts a comma-separated
     # list; the default permits the dashboard's dev server only.
@@ -137,7 +157,7 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
         allow_credentials=False,
-        expose_headers=["X-Wake-API-Key"],
+        expose_headers=["X-Wake-API-Key", "X-Wake-Worker-Saturation"],
     )
 
     app.state.wake = AppState(
@@ -182,7 +202,13 @@ def create_app(
     # Auth dependency is wired here so the legacy /health, /docs, /redoc and
     # /openapi.json surfaces remain unauthenticated. Per-router opt-in lets
     # all slices (sessions, replay, metrics, vault) inherit auth uniformly.
-    auth_dep = [Depends(verify_api_key)]
+    #
+    # Phase 7 ops-throughput: per-router rate-limit dependency. The
+    # method-aware dependency picks write vs read budget based on
+    # the HTTP verb (resolved at request time), so a single dep call
+    # covers POST/GET/PATCH/DELETE per router without per-route
+    # decoration.
+    auth_dep = [Depends(verify_api_key), Depends(rate_limit_dep())]
     app.include_router(agents_routes.router, dependencies=auth_dep)
     app.include_router(environments_routes.router, dependencies=auth_dep)
     app.include_router(sessions_routes.router, dependencies=auth_dep)
