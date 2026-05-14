@@ -1,0 +1,135 @@
+{{- if .Values.backup.enabled }}
+{{- /*
+  Pgbackrest CronJobs — TWO CronJobs share the same image / configmap /
+  secret and differ only in schedule + backup type:
+
+    1. `<fullname>-backup-full`       Weekly (Sun 02:00)  --type=full
+    2. `<fullname>-backup-incremental` Daily (Mon-Sat)    --type=incr
+
+  The first run of `pgbackrest backup` against a fresh stanza will
+  auto-create the stanza if missing (since 2.42), so no separate
+  one-shot stanza-create Job is needed in practice. If you prefer
+  explicit stanza creation, run:
+
+      kubectl -n wake create job --from=cronjob/<fullname>-backup-full \
+        wake-stanza-create-$(date +%s) -- pgbackrest --stanza=$STANZA \
+        stanza-create
+
+  History limits: keep last 3 successful + 3 failed pod logs for forensics.
+*/}}
+{{- $stanza := default (printf "%s-wake" .Release.Name) .Values.backup.stanza }}
+{{- $fullName := include "wake.fullname" . }}
+{{- $secretName := default (printf "%s-backup-s3" $fullName) .Values.backup.s3.secretName }}
+
+{{- range tuple "full" "incremental" }}
+{{- $kind := . }}
+{{- $schedule := index $.Values.backup.schedule . }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ $fullName }}-backup-{{ $kind }}
+  labels:
+    {{- include "wake.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: backup
+    backup.wake.dev/type: {{ $kind }}
+spec:
+  schedule: {{ $schedule | quote }}
+  # Don't overlap: if a backup is still running when the next schedule
+  # fires, skip rather than queue. Pgbackrest itself enforces a lock too.
+  concurrencyPolicy: Forbid
+  # If the controller misses a scheduled time (cluster outage, paused
+  # scheduler) skip backups older than 60min — incremental cadence is
+  # daily, so we'd rather skip than try to backfill a stale missed slot.
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      # Backups must not be killed mid-flight by node eviction. Retry
+      # once on failure (e.g. transient S3 hiccup), then surface.
+      backoffLimit: 1
+      activeDeadlineSeconds: 14400  # 4h cap on a single backup run
+      template:
+        metadata:
+          labels:
+            {{- include "wake.selectorLabels" $ | nindent 12 }}
+            app.kubernetes.io/component: backup
+            backup.wake.dev/type: {{ $kind }}
+        spec:
+          serviceAccountName: {{ $fullName }}-backup
+          restartPolicy: OnFailure
+          securityContext:
+            {{- toYaml $.Values.podSecurityContext | nindent 12 }}
+          containers:
+            - name: pgbackrest
+              securityContext:
+                {{- toYaml $.Values.containerSecurityContext | nindent 16 }}
+              image: "{{ $.Values.backup.image.repository }}:{{ $.Values.backup.image.tag }}"
+              imagePullPolicy: {{ $.Values.backup.image.pullPolicy }}
+              command:
+                - /bin/bash
+                - -c
+                - |
+                  set -euo pipefail
+                  STANZA={{ $stanza | quote }}
+                  TYPE={{ ternary "full" "incr" (eq $kind "full") | quote }}
+                  echo "[wake-backup] stanza=$STANZA type=$TYPE schedule={{ $schedule }}"
+                  # Auto-create stanza on first run (idempotent since 2.42).
+                  pgbackrest --stanza="$STANZA" --log-level-console=info stanza-create || true
+                  pgbackrest --stanza="$STANZA" --type="$TYPE" --log-level-console=info backup
+                  echo "[wake-backup] complete"
+                  pgbackrest --stanza="$STANZA" info
+              env:
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      {{- if $.Values.postgres.existingSecret }}
+                      name: {{ $.Values.postgres.existingSecret | quote }}
+                      key: postgres-password
+                      {{- else }}
+                      name: {{ $fullName }}-secret
+                      key: postgres-password
+                      {{- end }}
+                - name: PGBACKREST_REPO1_S3_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ $secretName | quote }}
+                      {{- if $.Values.backup.s3.secretName }}
+                      key: access-key-id
+                      {{- else }}
+                      key: access-key-id
+                      {{- end }}
+                - name: PGBACKREST_REPO1_S3_KEY_SECRET
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ $secretName | quote }}
+                      key: secret-access-key
+              volumeMounts:
+                - name: pgbackrest-config
+                  mountPath: /etc/pgbackrest
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+              resources:
+                {{- toYaml $.Values.backup.resources | nindent 16 }}
+          volumes:
+            - name: pgbackrest-config
+              configMap:
+                name: {{ $fullName }}-pgbackrest
+            - name: tmp
+              emptyDir: {}
+          {{- with $.Values.backup.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $.Values.backup.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $.Values.backup.affinity }}
+          affinity:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}
+{{- end }}

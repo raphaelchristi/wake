@@ -1,0 +1,144 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "Wake Helm chart values",
+  "description": "Partial schema — validates the backup section + top-level shape. Add new sections as adopting Helm's --validate workflow expands.",
+  "type": "object",
+  "properties": {
+    "image": {
+      "type": "object",
+      "properties": {
+        "repository": { "type": "string" },
+        "tag": { "type": "string" },
+        "pullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] }
+      }
+    },
+    "auth": {
+      "type": "object",
+      "properties": {
+        "required": { "type": "boolean" },
+        "apiKey": { "type": "string" },
+        "oauthStateSecret": { "type": "string" }
+      }
+    },
+    "postgres": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "user": { "type": "string" },
+        "database": { "type": "string" },
+        "password": { "type": "string" },
+        "existingSecret": { "type": "string" }
+      }
+    },
+    "backup": {
+      "type": "object",
+      "description": "Pgbackrest backup configuration (Phase 6 Tier 0 gap #3).",
+      "additionalProperties": true,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Master switch. Default false (opt-in). Set true to render backup CronJobs."
+        },
+        "image": {
+          "type": "object",
+          "properties": {
+            "repository": { "type": "string" },
+            "tag": { "type": "string" },
+            "pullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] }
+          }
+        },
+        "schedule": {
+          "type": "object",
+          "properties": {
+            "full": {
+              "type": "string",
+              "description": "Cron expression for weekly full backups (UTC).",
+              "pattern": "^[0-9*,/\\-]+ [0-9*,/\\-]+ [0-9*,/\\-]+ [0-9*,/\\-]+ [0-9*,/\\-]+$"
+            },
+            "incremental": {
+              "type": "string",
+              "description": "Cron expression for daily incremental backups (UTC).",
+              "pattern": "^[0-9*,/\\-]+ [0-9*,/\\-]+ [0-9*,/\\-]+ [0-9*,/\\-]+ [0-9*,/\\-]+$"
+            }
+          },
+          "required": ["full", "incremental"]
+        },
+        "retention": {
+          "type": "object",
+          "properties": {
+            "full": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 52,
+              "description": "Number of weekly full backups to keep."
+            },
+            "incremental": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 365,
+              "description": "Number of incremental backups to keep."
+            }
+          },
+          "required": ["full", "incremental"]
+        },
+        "stanza": {
+          "type": "string",
+          "description": "Pgbackrest stanza name. Empty = derived from release name."
+        },
+        "processMax": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32,
+          "description": "Parallelism for compression / upload."
+        },
+        "archiveCheck": {
+          "type": "boolean"
+        },
+        "s3": {
+          "type": "object",
+          "properties": {
+            "endpoint": { "type": "string" },
+            "bucket": { "type": "string" },
+            "region": { "type": "string" },
+            "uriStyle": { "type": "string", "enum": ["path", "host"] },
+            "verifyTls": { "type": "boolean" },
+            "secretName": {
+              "type": "string",
+              "description": "BYO Secret reference. Empty = chart renders inline Secret from accessKeyId/secretAccessKey."
+            },
+            "accessKeyId": { "type": "string" },
+            "secretAccessKey": { "type": "string" }
+          }
+        },
+        "restoreTest": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "hookType": {
+              "type": "string",
+              "enum": ["test", "post-install", "post-upgrade", "post-install,post-upgrade"]
+            },
+            "storage": {
+              "type": "object",
+              "properties": {
+                "size": { "type": "string" },
+                "storageClass": { "type": "string" }
+              }
+            }
+          }
+        },
+        "resources": {
+          "type": "object",
+          "properties": {
+            "requests": { "type": "object" },
+            "limits": { "type": "object" }
+          }
+        },
+        "nodeSelector": { "type": "object" },
+        "tolerations": { "type": "array" },
+        "affinity": { "type": "object" }
+      },
+      "required": ["enabled"]
+    }
+  }
+}
