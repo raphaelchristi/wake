@@ -47,6 +47,8 @@ dependencies = [
     # transitive so the decorator-based path is also available to
     # downstream integrators.
     "slowapi>=0.1.9",
+    # Phase 7 ops-metrics-benchmark (Tier 1 gap #8).
+    "prometheus-fastapi-instrumentator>=7.0",
 ]
 
 [project.optional-dependencies]

@@ -23,11 +23,13 @@ or 503 when the system is overloaded.
 from __future__ import annotations
 
 import os
+import time
 from typing import TYPE_CHECKING, cast
 
 import structlog
 
 from wake.adapters.context import SessionContext
+from wake.observability.metrics import get_metrics
 from wake.runtime.event_stream import WakeEventStream
 from wake.runtime.tool_registry import WakeToolRegistry
 
@@ -186,7 +188,11 @@ class SessionDispatcher:
         )
 
         # Phase 7 queue-depth bookkeeping (gap #4) + Phase 6.1 tenant
-        # scope on append + Phase 7 post-step cost budget check (gap #7).
+        # scope on append + Phase 7 post-step cost budget check (gap #7)
+        # + Phase 7 Prom metrics emit (gap #8).
+        metrics = get_metrics()
+        workspace_id = getattr(session, "workspace_id", None)
+        step_started = time.perf_counter()
         self.in_flight += 1
         try:
             # The Protocol declares ``step`` as ``async def ... -> AsyncIterator``,
@@ -196,7 +202,7 @@ class SessionDispatcher:
             # scaffolding Protocol.
             stream = cast("AsyncIterator[Event]", adapter.step(ctx, events, tools))
             async for emitted in stream:
-                await self._event_log.append(
+                persisted = await self._event_log.append(
                     session.id,
                     emitted.type,
                     emitted.payload,
@@ -205,6 +211,25 @@ class SessionDispatcher:
                     organization_id=session.organization_id,
                     workspace_id=session.workspace_id,
                 )
+                # Emit per-event metric. The store-returned event has the
+                # canonical type / workspace_id; we fall back to the
+                # emitted view if the store doesn't echo back.
+                ev_type = getattr(persisted, "type", None) or emitted.type
+                ev_ws = (
+                    getattr(persisted, "workspace_id", None)
+                    or workspace_id
+                )
+                metrics.observe_event_appended(
+                    event_type=str(ev_type),
+                    workspace=ev_ws,
+                )
+                # Cost histogram — populated only when the adapter
+                # surfaced an LLM cost on the event metadata. Slice B
+                # owns the *enforcement* layer; we just *observe* here.
+                meta = emitted.metadata or {}
+                cost = meta.get("cost_usd")
+                if isinstance(cost, (int, float)):
+                    metrics.observe_cost(usd=float(cost))
 
             # Post-step cost budget enforcement — Phase 7 gap #7.
             # Reactive (not predictive): if running total of cost_usd across
@@ -227,5 +252,10 @@ class SessionDispatcher:
                         agent_id=agent.id,
                         exc_info=True,
                     )
+        except Exception:
+            metrics.observe_error(code="dispatcher_step_failed")
+            raise
         finally:
+            elapsed = time.perf_counter() - step_started
+            metrics.observe_step_duration(seconds=elapsed)
             self.in_flight = max(0, self.in_flight - 1)

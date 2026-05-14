@@ -1,0 +1,74 @@
+{{- if .Values.monitoring.enabled }}
+{{- /*
+  ServiceMonitor — kube-prometheus-stack opt-in scrape config.
+
+  The Wake API container exposes /metrics on the same port as the
+  application HTTP server (default 8080). This ServiceMonitor tells
+  the Prometheus Operator to scrape it on a schedule.
+
+  Phase 7 / Tier 1 gap #8.
+
+  Default: monitoring.enabled = false (opt-in). Operators using
+  kube-prometheus-stack flip this to true and optionally set
+  monitoring.labels with the discovery selector their stack uses
+  (commonly `release: prometheus`).
+
+  Notes:
+  * apiVersion uses monitoring.coreos.com/v1 — the kube-prometheus-stack
+    CRD. We do NOT install the CRD here; if it's missing, helm apply
+    will fail with "no matches for kind ServiceMonitor". That's
+    intentional: operators should know their stack.
+  * endpoints[].path = /metrics matches the FastAPI instrumentator
+    mount point in src/wake/api/metrics_prom.py.
+  * scrapeTimeout < interval — operator default rule.
+  * targetLabels surfaces the Wake-specific labels onto the scraped
+    series so Grafana dashboards can group by workspace / instance.
+*/}}
+{{- $fullName := include "wake.fullname" . }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ $fullName }}-api
+  labels:
+    {{- include "wake.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+    {{- with .Values.monitoring.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.monitoring.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  jobLabel: app.kubernetes.io/name
+  selector:
+    matchLabels:
+      {{- include "wake.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: api
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  endpoints:
+    - port: http
+      path: {{ .Values.monitoring.path | default "/metrics" | quote }}
+      interval: {{ .Values.monitoring.interval | default "30s" | quote }}
+      scrapeTimeout: {{ .Values.monitoring.scrapeTimeout | default "10s" | quote }}
+      honorLabels: {{ .Values.monitoring.honorLabels | default false }}
+      scheme: {{ .Values.monitoring.scheme | default "http" | quote }}
+      {{- with .Values.monitoring.tlsConfig }}
+      tlsConfig:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.monitoring.relabelings }}
+      relabelings:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.monitoring.metricRelabelings }}
+      metricRelabelings:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  {{- with .Values.monitoring.targetLabels }}
+  targetLabels:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}

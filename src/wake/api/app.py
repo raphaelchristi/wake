@@ -29,6 +29,7 @@ from wake.api.dependencies import (
     is_under_pytest,
     verify_api_key,
 )
+from wake.api.metrics_prom import install_prometheus
 from wake.api.middleware.backpressure import BackpressureMiddleware
 from wake.api.ratelimit import (
     RateLimitExceededError,
@@ -218,6 +219,13 @@ def create_app(
     app.include_router(users_routes.router, dependencies=auth_dep)
     app.include_router(vault_routes.router, dependencies=auth_dep)
     app.include_router(sse_router, dependencies=auth_dep)
+
+    # Prometheus exposition — ``GET /metrics`` in text format. NOT auth
+    # gated (Prom convention; scrapers don't carry app API keys — protect
+    # via NetworkPolicy / firewall). Lives alongside the JSON
+    # ``GET /v1/metrics/summary`` endpoint owned by ``metrics_routes``.
+    # Phase 7 / Tier 1 gap #8.
+    install_prometheus(app)
 
     return app
 
