@@ -40,6 +40,13 @@ dependencies = [
     "structlog>=24.4",
     "click>=8.1",
     "pyyaml>=6.0",
+    # Phase 7 ops-throughput (Tier 1 gap #6).
+    # slowapi pulls ``limits`` (the underlying token-bucket
+    # implementation). Wake uses ``limits.aio`` directly for the
+    # programmatic dependency path; ``slowapi`` itself is left as a
+    # transitive so the decorator-based path is also available to
+    # downstream integrators.
+    "slowapi>=0.1.9",
 ]
 
 [project.optional-dependencies]
@@ -75,6 +82,14 @@ store-postgres = [
 ]
 sandbox-runtime = [
     "wake-sandbox-runtime",
+]
+# Phase 7 ops-throughput: Redis-backed rate-limit storage for
+# multi-replica deployments. The async backend in ``limits.aio``
+# uses ``coredis``; the older sync API was ``redis-py``. We pin
+# the modern stack so ``RedisStorage(redis://...)`` works out of
+# the box on multi-pod Helm releases.
+ratelimit-redis = [
+    "coredis>=3.4",
 ]
 
 [project.scripts]

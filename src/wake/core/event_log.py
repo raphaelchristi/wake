@@ -51,7 +51,26 @@ class EventLog:
         metadata: dict[str, Any] | None = None,
         organization_id: str = DEFAULT_ORGANIZATION_ID,
         workspace_id: str = DEFAULT_WORKSPACE_ID,
+        idempotency_key: str | None = None,
     ) -> Event:
+        """Append an event, optionally honouring ``idempotency_key``.
+
+        When ``idempotency_key`` is None this is a regular append.
+        When set, the store will deduplicate against any prior event
+        carrying the same ``(workspace_id, session_id, idempotency_key)``
+        tuple and return the existing row instead of inserting a new
+        one. See ``EventStore.append`` for the full contract.
+
+        The key is mirrored into ``metadata["idempotency_key"]`` for
+        observability — clients can inspect the persisted event to
+        recover the dedupe key without going through a side channel.
+        """
+        # When the caller passes a key, ensure metadata mirrors it so
+        # the persisted row carries the dedupe signal in plain sight.
+        if idempotency_key is not None:
+            meta = dict(metadata or {})
+            meta.setdefault("idempotency_key", idempotency_key)
+            metadata = meta
         return await self._store.append(
             session_id=session_id,
             event_type=event_type,
@@ -60,6 +79,7 @@ class EventLog:
             metadata=metadata,
             organization_id=organization_id,
             workspace_id=workspace_id,
+            idempotency_key=idempotency_key,
         )
 
     async def get(

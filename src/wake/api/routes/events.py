@@ -39,6 +39,10 @@ class EventCreate(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
     parent_id: str | None = None
     metadata: dict[str, Any] | None = None
+    #: Optional idempotency key — when set, a second request carrying
+    #: the same key for the same (workspace, session) returns the
+    #: previously-persisted event instead of creating a duplicate.
+    idempotency_key: str | None = Field(default=None, max_length=128)
 
 
 class EventList(BaseModel):
@@ -76,6 +80,7 @@ async def append_event(
         metadata=body.metadata,
         organization_id=session.organization_id,
         workspace_id=session.workspace_id,
+        idempotency_key=body.idempotency_key,
     )
 
     # If the user just spoke, kick the harness in the background through

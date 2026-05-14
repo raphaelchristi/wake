@@ -61,6 +61,24 @@ def _row_to_event(row: EventRow) -> Event:
     )
 
 
+def _ensure_metadata_with_key(
+    metadata: dict[str, Any] | None, idempotency_key: str | None
+) -> dict[str, Any] | None:
+    """Mirror ``idempotency_key`` into the persisted metadata payload.
+
+    Wake stores the dedupe signal in two places: the dedicated column
+    (driving the UNIQUE index) and the ``meta`` JSONB so observability
+    tools can recover the key from the event row without joining.
+    The mirror is one-way: if the caller already passed
+    ``metadata["idempotency_key"]`` we trust it.
+    """
+    if idempotency_key is None:
+        return metadata
+    out = dict(metadata or {})
+    out.setdefault("idempotency_key", idempotency_key)
+    return out
+
+
 class PostgresEventStore(EventStore):
     """Postgres-backed append-only event log."""
 
@@ -85,6 +103,8 @@ class PostgresEventStore(EventStore):
         metadata: dict[str, Any] | None = None,
         organization_id: str = DEFAULT_ORGANIZATION_ID,
         workspace_id: str = DEFAULT_WORKSPACE_ID,
+        *,
+        idempotency_key: str | None = None,
     ) -> Event:
         """Append an event, atomically allocating ``seq``.
 
@@ -93,9 +113,18 @@ class PostgresEventStore(EventStore):
         concurrent writers can't both observe the same ``MAX(seq)``.
         ``pg_advisory_xact_lock`` is released automatically on commit/
         rollback — no manual unlock needed.
+
+        Phase 7 idempotency (Tier 1 gap #4): when ``idempotency_key``
+        is set we look the key up first under the held advisory lock
+        and return the existing event if a duplicate is detected. The
+        UNIQUE partial index installed by migration 0004 enforces the
+        invariant at the storage layer; the pre-check just lets us
+        return the dedupe target without surfacing the integrity
+        error to callers.
         """
         now = utcnow()
         event_id = new_ulid()
+        meta = _ensure_metadata_with_key(metadata, idempotency_key)
         async with self._sessionmaker() as s, s.begin():
             # Cross-process seq serialisation. Advisory locks are cheap
             # (~µs) and don't queue on the row, so this scales to high
@@ -105,6 +134,22 @@ class PostgresEventStore(EventStore):
                 text("SELECT pg_advisory_xact_lock(hashtext(:sid)::bigint)"),
                 {"sid": session_id},
             )
+            if idempotency_key is not None:
+                existing = await s.scalar(
+                    select(EventRow)
+                    .where(EventRow.workspace_id == workspace_id)
+                    .where(EventRow.session_id == session_id)
+                    .where(EventRow.idempotency_key == idempotency_key)
+                    .limit(1)
+                )
+                if existing is not None:
+                    log.debug(
+                        "event.append.idempotent_dedupe",
+                        session_id=session_id,
+                        idempotency_key=idempotency_key,
+                        existing_id=existing.id,
+                    )
+                    return _row_to_event(existing)
             current_max = await s.scalar(
                 select(func.max(EventRow.seq))
                 .where(EventRow.session_id == session_id)
@@ -120,7 +165,8 @@ class PostgresEventStore(EventStore):
                 type=event_type,
                 payload=payload,
                 parent_id=parent_id,
-                meta=metadata,
+                meta=meta,
+                idempotency_key=idempotency_key,
                 created_at=now,
             )
             s.add(row)
@@ -140,7 +186,7 @@ class PostgresEventStore(EventStore):
             type=event_type,
             payload=payload,
             parent_id=parent_id,
-            metadata=metadata,
+            metadata=meta,
             created_at=now,
         )
 
