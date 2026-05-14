@@ -6,7 +6,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="Apache 2.0"></a>
   <img src="https://img.shields.io/badge/python-3.11%2B-blue.svg" alt="Python 3.11+">
   <img src="https://img.shields.io/badge/status-alpha-orange.svg" alt="alpha">
-  <a href="https://github.com/raphaelchristi/wake/releases/tag/v0.4.0-production"><img src="https://img.shields.io/badge/version-v0.4.0--production-green.svg" alt="v0.4.0"></a>
+  <a href="https://github.com/raphaelchristi/wake/releases/tag/v0.5.2-fixes"><img src="https://img.shields.io/badge/version-v0.5.2--fixes-green.svg" alt="v0.5.2"></a>
 </p>
 
 <p align="center">
@@ -17,13 +17,57 @@
 
 ## Why Wake?
 
-Three problems hit every team running AI agents in production:
+If you run **one** AI agent app, you don't need Wake — `python main.py` is fine.
 
-1. **Durability** — agent dies mid-task, loses everything
-2. **Sandbox** — agent runs arbitrary code, vulnerable to prompt injection
-3. **Framework lock-in** — LangGraph in one team, CrewAI in another, nothing shared
+Wake matters when you have **multiple agent apps**, a **multi-tenant** product, or **compliance pressure** (audit, replay, data residency). At that point you start reimplementing the same plumbing in every app — and that plumbing is what Wake gives you for free.
 
-Anthropic solved this internally with **Managed Agents** (proprietary, hosted, Claude-only). Wake is the open-source version — and goes further: *any* harness runs on the same substrate via the **`HarnessAdapter` ABI**.
+### The 8 concrete things Wake adds
+
+| | Without Wake (N apps standalone) | With Wake (shared substrate) |
+|---|---|---|
+| **Durability** | Container restarts → session lost | Event log persists; another worker resumes via advisory lock in <60s |
+| **Replay** | Re-read LangSmith trace (if it didn't expire) | Deterministic step-by-step scrubber **including sandbox state** at any event |
+| **Audit** | Cross-correlate logs from N apps + Phoenix + LangSmith | Single canonical event log; query by tenant/agent/time/cost |
+| **Sandbox** | Tool calls run on the container host (injection risk) | `sandbox-runtime` (same library Anthropic uses internally) — agent can't escape |
+| **Vault** | Each app reads secrets via middleware; tokens leak in logs if you slip | Agent never sees tokens; agentgateway substitutes placeholders at egress |
+| **Multi-model** | Provider hardcoded per app; switching = code change + redeploy of N | LiteLLM at substrate; one config switch hits all agents |
+| **Multi-worker** | Each app's own retry/backpressure; bug in one breaks all | Postgres advisory locks + heartbeat; kill-and-resume across a fleet |
+| **Cost tracking** | Manual spreadsheet across N billing dashboards | LiteLLM callbacks → event metadata → unified dashboard |
+
+Anthropic solved all of this internally with **Managed Agents** (proprietary, Claude-only, hosted). Wake is the open-source version — and goes further: **any** harness (LangGraph, CrewAI, Pydantic AI, Claude SDK, custom) plugs in via the `HarnessAdapter` ABI v0.1.0.
+
+### When Wake is for you
+
+Pick Wake when at least 3 of these are true:
+
+- You run **3+ agent apps** (or plan to within 12 months)
+- You need **multi-tenant isolation** (vault namespaces, per-tenant audit)
+- Customers ask for **audit log / compliance** (SOC2, HIPAA, internal review)
+- You want to **switch LLM providers** without rewriting every app
+- You need **deterministic replay** for debugging or evals
+- Tool calls touch sensitive data and **must be sandboxed**
+- You operate **self-hosted** (data residency, air-gapped, on-prem)
+
+### When Wake is **NOT** for you
+
+Honest red flags — don't adopt Wake if:
+
+- You have **one app** and `python main.py` works (you're adding ops cost for zero gain)
+- **Hosted is fine** and Claude-only is fine → use Anthropic Managed Agents directly
+- **No compliance / audit pressure** (no one will ever query your event log)
+- **Small team (1–3 devs)** without bandwidth to operate Postgres + agentgateway + Infisical sidecars
+- You need a **memory store / RAG / vector DB** at the substrate level — Wake doesn't have those yet
+- You need **scheduled / always-on agents** — Wake's model is session-per-request
+
+### The K8s analogy
+
+Wake : agents :: Kubernetes : containers.
+
+- 2 containers? Use `docker run`. K8s is overkill.
+- 200 containers + 30 teams? Without K8s you suffer.
+- Wake follows the same curve. Adopt when the substrate cost is **less** than the cost of reimplementing it in each app.
+
+> **Status:** Wake is alpha (v0.5.2). Production-shaped components ship (Postgres, sandbox, vault, multi-worker, dashboard) but **multi-tenancy is not first-class yet** — see [`docs/ROADMAP.md`](./docs/ROADMAP.md) for the gap list.
 
 ## Quickstart
 
@@ -113,9 +157,25 @@ Wake builds the **spec, the runtime, the adapters.** Everything else plugs in.
 | 2 — First Adapter (HarnessAdapter ABI + Claude SDK + conformance suite) | ✅ done |
 | 3 — Spec Validation (LangGraph + CrewAI + Pydantic AI adapters, 10/10) | ✅ done |
 | 4 — Production Stack (Postgres + sandbox-runtime + Vault + LiteLLM + deploy) | ✅ done |
-| 5 — Public Launch | ⚪ next |
+| 5 — Operator UI (Next.js dashboard: sessions, replay, metrics, vault) | ✅ done |
+| 5.1 / 5.2 — Adversarial review fixes (auth, OAuth state, worker locks) | ✅ done |
+| 6 — Public Launch | ⚪ next |
 
 See [`phases/`](./phases/) for detailed progress.
+
+### Known gaps (honest)
+
+Wake is **alpha**. These belong on the roadmap before "1.0":
+
+- **No multi-tenancy** — single namespace; org/workspace concept missing
+- **No RBAC** — API key = god mode
+- **No backup runbook** — Postgres exists, `pgbackrest` not wired
+- **No client SDKs** — `wake-py` / `wake-ts` not published
+- **No `wake eval`** — adapter conformance is tested; agent evals are not
+- **No memory / RAG / artifact primitives** — out of scope today
+- **No published benchmarks** — load test code exists, never run + published
+
+If any of these are blockers, factor them into your decision.
 
 ## Docs
 
