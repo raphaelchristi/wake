@@ -17,6 +17,7 @@ Plano de execução do Wake. Cada fase tem **gates de saída objetivos** — voc
 | [Phase 4](./PHASE-4-production-stack.md) | Production Stack | 3 semanas | ✅ done |
 | [Phase 5](./PHASE-5-operator-ui.md) | Operator UI (Wake Dashboard) | 3-5 semanas | ✅ done |
 | [Phase 5.1](./PHASE-5.1-CONTRACT.md) | Adversarial Review Fixes | 2-3h | ✅ done |
+| Phase 5.2 | Adversarial Review Fixes (2nd pass) | <1h | ✅ done |
 | [Phase 6](./PHASE-6-public-launch.md) | Public Launch | 1 semana | ⚪ not_started |
 
 **Total estimado:** 12-13 semanas (≈3 meses) para Wake v0.1.0 público com 4 adapters funcionando.

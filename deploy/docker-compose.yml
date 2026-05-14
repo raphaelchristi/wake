@@ -96,6 +96,12 @@ services:
       # exit early if the operator forgot to set the key.
       WAKE_AUTH_REQUIRED: "true"
       WAKE_API_KEY: ${WAKE_API_KEY:?WAKE_API_KEY is required — export it before docker compose up}
+      # Shared OAuth state secret (Phase 5.1 finding #4 fix). Optional
+      # for single-host Compose, but recommended so restarts don't
+      # invalidate in-flight callback states. ${VAR:-} produces an empty
+      # default which makes oauth_state.py generate a per-process value
+      # and log a warning.
+      WAKE_OAUTH_STATE_SECRET: ${WAKE_OAUTH_STATE_SECRET:-}
       # Per-provider keys are mounted from the host env so they never
       # land in image layers.
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}

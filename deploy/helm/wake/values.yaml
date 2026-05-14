@@ -41,6 +41,19 @@ auth:
     name: ""
     key: ""
 
+  # HMAC secret used to sign OAuth ``state`` tokens (Phase 5.1 vault
+  # changes). MUST be identical across every API replica or callbacks
+  # initiated on pod A will fail verification on pod B with
+  # ``invalid or expired OAuth state``. The chart therefore REQUIRES
+  # either ``oauthStateSecret`` (plaintext, rendered into the
+  # chart-managed Secret) or ``oauthStateSecretRef`` (BYO existing
+  # Secret) whenever ``api.replicas`` > 1. Generate with
+  # ``openssl rand -hex 32``.
+  oauthStateSecret: ""
+  oauthStateSecretRef:
+    name: ""
+    key: ""
+
 # ---------------------------------------------------------------------------
 # API tier — handles HTTP + SSE.
 # ---------------------------------------------------------------------------

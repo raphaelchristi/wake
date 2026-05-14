@@ -66,6 +66,22 @@ spec:
                   name: {{ include "wake.fullname" . }}-secret
                   key: wake-api-key
                   {{- end }}
+            # Shared OAuth state secret (Phase 5.1 finding #4 fix). All
+            # API replicas must see the same value or callbacks initiated
+            # on pod A fail verification on pod B. ``wake.api.oauth_state``
+            # falls back to a per-process random value when this env is
+            # unset, which only works for a single-replica deployment.
+            - name: WAKE_OAUTH_STATE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  {{- if .Values.auth.oauthStateSecretRef.name }}
+                  name: {{ .Values.auth.oauthStateSecretRef.name | quote }}
+                  key: {{ .Values.auth.oauthStateSecretRef.key | quote }}
+                  {{- else }}
+                  name: {{ include "wake.fullname" . }}-secret
+                  key: wake-oauth-state-secret
+                  optional: true
+                  {{- end }}
             - name: ANTHROPIC_API_KEY
               valueFrom:
                 secretKeyRef:

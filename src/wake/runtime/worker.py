@@ -167,71 +167,69 @@ class WakeWorker:
                 break
             if session.id in self._in_flight:
                 continue
-            if not await self._try_claim(session.id):
+            claim = await self._try_claim(session.id)
+            if claim is None:
                 continue
             self._in_flight.add(session.id)
-            asyncio.create_task(self._process_session(session))
+            asyncio.create_task(self._process_session(session, claim))
             dispatched += 1
         return dispatched
 
-    async def _try_claim(self, session_id: str) -> bool:
-        """Acquire the per-session lock for Postgres backends.
+    async def _try_claim(self, session_id: str) -> Any | None:
+        """Acquire the per-session lock and return a claim handle.
 
-        SQLite has no advisory-lock primitive, so claiming is a no-op
-        and the worker assumes single-process correctness (we cap
-        ``concurrency`` by checking ``_in_flight`` above).
+        Returns
+        -------
+        * ``WorkerHeartbeat`` instance (Postgres backend, lock + heartbeat
+          held on a dedicated connection — see ``WorkerHeartbeat.start``).
+        * ``_NoOpClaim`` sentinel (SQLite backend / no advisory locks).
+        * ``None`` if the lock is held by another worker, or if the
+          Postgres backend is advertised but the locking helper is not
+          installed (fail-closed — the alternative is to dispatch the
+          step *without* a lock, which would let two replicas race on
+          the same session).
         """
         if not self._use_pg_locks:
-            return True
+            return _NoOpClaim()
         try:
-            from wake_store_postgres.locks import acquire_session_lock
-        except ImportError:  # pragma: no cover
-            return True
+            from wake_store_postgres.heartbeat import WorkerHeartbeat
+        except ImportError:
+            # Backend looks like Postgres but the optional adapter is
+            # missing — refuse to dispatch rather than racing.
+            logger.error(
+                "worker.lock.adapter_missing",
+                session_id=session_id,
+                detail=(
+                    "Postgres engine detected but wake_store_postgres is "
+                    "not installed; install wake-store-postgres or set "
+                    "WAKE_DATABASE_URL=sqlite+... for dev."
+                ),
+            )
+            return None
+        heartbeat = WorkerHeartbeat(self._engine, session_id, self._worker_id)
         try:
-            acquired: bool = await acquire_session_lock(self._engine, session_id)
-            return acquired
+            acquired = await heartbeat.start()
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "worker.lock.failed",
                 session_id=session_id,
                 error=str(exc),
             )
-            return False
+            return None
+        if not acquired:
+            # Lock is held elsewhere — peers are processing this session.
+            return None
+        return heartbeat
 
-    async def _release(self, session_id: str) -> None:
-        if not self._use_pg_locks:
-            return
+    async def _process_session(self, session: Any, claim: Any) -> None:
+        """Dispatch one step and clean up regardless of outcome.
+
+        ``claim`` is the handle returned by :meth:`_try_claim` — either a
+        ``WorkerHeartbeat`` (Postgres) or ``_NoOpClaim`` (SQLite). It is
+        released here in ``finally`` so the advisory lock stays held for
+        the duration of the dispatcher step.
+        """
         try:
-            from wake_store_postgres.locks import release_session_lock
-        except ImportError:  # pragma: no cover
-            return
-        try:
-            await release_session_lock(self._engine, session_id)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "worker.release.failed",
-                session_id=session_id,
-                error=str(exc),
-            )
-
-    async def _process_session(self, session: Any) -> None:
-        """Dispatch one step and clean up regardless of outcome."""
-        heartbeat: Any | None = None
-        try:
-            if self._use_pg_locks:
-                try:
-                    from wake_store_postgres.heartbeat import WorkerHeartbeat
-
-                    heartbeat = WorkerHeartbeat(
-                        self._engine, session.id, self._worker_id
-                    )
-                    # We already hold the lock via _try_claim; the
-                    # heartbeat task only stamps `_heartbeat` metadata.
-                    # Skipping the start/stop here keeps the test surface
-                    # tractable; production should call start().
-                except ImportError:  # pragma: no cover
-                    heartbeat = None
-
             agent = await self._store.agents.get(
                 session.agent_id, version=session.agent_version
             )
@@ -260,10 +258,13 @@ class WakeWorker:
         finally:
             async with self._inflight_lock:
                 self._in_flight.discard(session.id)
-            await self._release(session.id)
-            if heartbeat is not None:
+            # Release the advisory lock *after* dispatch completes,
+            # closing the window where another worker could double-process
+            # this session.
+            stop = getattr(claim, "stop", None)
+            if stop is not None:
                 with contextlib.suppress(Exception):
-                    await heartbeat.stop()
+                    await stop()
 
     async def _drain_inflight(self) -> None:
         """Wait for all in-flight sessions to complete (best effort)."""
@@ -297,6 +298,17 @@ def install_signal_handlers(loop: asyncio.AbstractEventLoop, worker: WakeWorker)
         # caller falls back to default-KeyboardInterrupt behaviour.
         with contextlib.suppress(NotImplementedError, RuntimeError):
             loop.add_signal_handler(sig, _shutdown)
+
+
+class _NoOpClaim:
+    """Sentinel claim handle used when no advisory-lock backend exists.
+
+    Has a no-op ``stop()`` so :meth:`WakeWorker._process_session` can
+    treat SQLite (single-process) and Postgres (lock+heartbeat) uniformly.
+    """
+
+    async def stop(self) -> None:
+        return None
 
 
 __all__ = ["DEFAULT_POLL_INTERVAL_S", "WakeWorker", "install_signal_handlers"]

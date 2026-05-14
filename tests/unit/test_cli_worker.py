@@ -225,3 +225,174 @@ async def test_worker_default_worker_id_is_ulid_prefixed() -> None:
     disp = _RecordingDispatcher()
     worker = WakeWorker(store, disp)  # type: ignore[arg-type]
     assert worker.worker_id.startswith("worker-")
+
+
+# ---------------------------------------------------------------------------
+# Postgres claim semantics (Phase 5.2 regression)
+# ---------------------------------------------------------------------------
+
+
+class _FakeHeartbeat:
+    """Stand-in for ``wake_store_postgres.heartbeat.WorkerHeartbeat``.
+
+    Captures start/stop calls so tests can assert the worker actually
+    holds the lock for the dispatcher step and releases it after.
+    """
+
+    def __init__(self, engine: Any, session_id: str, worker_id: str) -> None:
+        self.session_id = session_id
+        self.worker_id = worker_id
+        self.started = False
+        self.stopped = False
+        # Track ordering relative to dispatcher.run_step.
+        self.events: list[str] = []
+        # If set to False, start() returns False (lock contended).
+        self.acquire_result = True
+
+    async def start(self) -> bool:
+        self.started = True
+        self.events.append("start")
+        _FakeHeartbeat._global.append(("start", self.session_id))
+        return self.acquire_result
+
+    async def stop(self) -> None:
+        self.stopped = True
+        self.events.append("stop")
+        _FakeHeartbeat._global.append(("stop", self.session_id))
+
+    # Class-level recorder used to inspect interleaving across instances.
+    _global: list[tuple[str, str]] = []
+
+
+class _PgFakeEngine:
+    """Just enough of an AsyncEngine to look Postgres-shaped to the worker."""
+
+    class _Url:
+        def get_backend_name(self) -> str:
+            return "postgresql"
+
+    url = _Url()
+
+
+def _install_fake_heartbeat(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Inject the FakeHeartbeat as `wake_store_postgres.heartbeat.WorkerHeartbeat`.
+
+    The worker imports lazily inside ``_try_claim``; we wire a module
+    stub via ``sys.modules`` so the import succeeds with our double.
+    """
+    import sys
+    import types
+
+    _FakeHeartbeat._global.clear()
+    module = types.ModuleType("wake_store_postgres.heartbeat")
+    module.WorkerHeartbeat = _FakeHeartbeat  # type: ignore[attr-defined]
+    # Make sure the parent package is present too.
+    parent = sys.modules.get("wake_store_postgres")
+    if parent is None:
+        parent = types.ModuleType("wake_store_postgres")
+        monkeypatch.setitem(sys.modules, "wake_store_postgres", parent)
+    monkeypatch.setitem(sys.modules, "wake_store_postgres.heartbeat", module)
+
+
+@pytest.mark.asyncio
+async def test_worker_holds_lock_during_dispatch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Postgres backend: heartbeat.start() runs before dispatch, stop() after.
+
+    Regression for Codex finding: worker claimed a one-off lock that was
+    released the moment the helper returned, then never started a
+    heartbeat. With the fix the WorkerHeartbeat is the claim handle and
+    its lifetime brackets ``dispatcher.run_step``.
+    """
+    _install_fake_heartbeat(monkeypatch)
+
+    sessions = [_FakeSession("s1")]
+    store = _FakeStore(sessions)
+    store.engine = _PgFakeEngine()  # type: ignore[attr-defined]
+
+    order: list[str] = []
+
+    class _OrderedDispatcher(_RecordingDispatcher):
+        async def run_step(self, session: Any, agent: Any) -> None:
+            order.append(f"dispatch:{session.id}")
+            await super().run_step(session, agent)
+
+    disp = _OrderedDispatcher(store=store)
+    worker = WakeWorker(store, disp, concurrency=1, worker_id="w-pg")  # type: ignore[arg-type]
+    # The engine is the source of truth for backend detection; force it
+    # since the FakeStore was constructed without one.
+    worker._engine = store.engine  # type: ignore[attr-defined]  # noqa: SLF001
+    worker._use_pg_locks = True  # noqa: SLF001
+
+    dispatched = await worker.run_once()
+    assert dispatched == 1
+    # Wait for the scheduled task to finish.
+    for _ in range(100):
+        if disp.calls:
+            break
+        await asyncio.sleep(0.01)
+    # Drain in-flight before asserting on the global recorder.
+    for _ in range(100):
+        if not worker._in_flight:  # noqa: SLF001
+            break
+        await asyncio.sleep(0.01)
+
+    events = _FakeHeartbeat._global
+    assert events[0] == ("start", "s1"), "lock must be acquired before dispatch"
+    assert events[-1] == ("stop", "s1"), "lock must be released after dispatch"
+
+
+@pytest.mark.asyncio
+async def test_worker_skips_session_when_lock_contended(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Another worker holds the lock → we must not dispatch."""
+    _install_fake_heartbeat(monkeypatch)
+
+    contended = _FakeSession("contended")
+    store = _FakeStore([contended])
+    store.engine = _PgFakeEngine()  # type: ignore[attr-defined]
+    disp = _RecordingDispatcher()
+    worker = WakeWorker(store, disp, concurrency=1)  # type: ignore[arg-type]
+    worker._engine = store.engine  # type: ignore[attr-defined]  # noqa: SLF001
+    worker._use_pg_locks = True  # noqa: SLF001
+
+    # Patch FakeHeartbeat to refuse acquisition.
+    original_start = _FakeHeartbeat.start
+
+    async def _contended_start(self: _FakeHeartbeat) -> bool:
+        self.acquire_result = False
+        return await original_start(self)
+
+    monkeypatch.setattr(_FakeHeartbeat, "start", _contended_start)
+
+    dispatched = await worker.run_once()
+    assert dispatched == 0
+    assert disp.calls == [], "dispatcher must not run when lock is contended"
+
+
+@pytest.mark.asyncio
+async def test_worker_fails_closed_when_postgres_helper_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Engine is Postgres-shaped but `wake_store_postgres` isn't installed.
+
+    The worker must refuse to dispatch rather than running unlocked —
+    silently racing across replicas is exactly the failure mode this
+    test guards against.
+    """
+    import sys
+
+    # Make sure the (possibly real) heartbeat module is not importable.
+    monkeypatch.setitem(sys.modules, "wake_store_postgres.heartbeat", None)
+
+    sessions = [_FakeSession("s-pg")]
+    store = _FakeStore(sessions)
+    store.engine = _PgFakeEngine()  # type: ignore[attr-defined]
+    disp = _RecordingDispatcher()
+    worker = WakeWorker(store, disp, concurrency=1)  # type: ignore[arg-type]
+    worker._engine = store.engine  # type: ignore[attr-defined]  # noqa: SLF001
+    worker._use_pg_locks = True  # noqa: SLF001
+
+    dispatched = await worker.run_once()
+    assert dispatched == 0
+    assert disp.calls == [], "must not dispatch without an advisory-lock primitive"

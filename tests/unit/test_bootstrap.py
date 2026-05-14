@@ -36,7 +36,8 @@ def _reset_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
 
 @pytest_asyncio.fixture
 async def prod_app() -> FastAPI:
-    return await bootstrap.create_production_app()
+    """Wired-via-async app — components materialised eagerly."""
+    return await bootstrap.create_production_app_async()
 
 
 @pytest_asyncio.fixture
@@ -144,11 +145,74 @@ async def test_create_session_via_test_client(prod_client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_create_production_app_returns_fastapi() -> None:
-    app = await bootstrap.create_production_app()
+async def test_create_production_app_async_returns_fastapi() -> None:
+    app = await bootstrap.create_production_app_async()
     assert isinstance(app, FastAPI)
     # Routes from every router should be mounted.
     paths = {r.path for r in app.routes}  # type: ignore[attr-defined]
     assert "/health" in paths
     assert "/v1/sessions" in paths
     assert "/v1/agents" in paths
+
+
+def test_create_production_app_is_sync_factory() -> None:
+    """Uvicorn calls factories synchronously — the contract enforced here.
+
+    This is the regression test for Codex finding "wake server targets an
+    async Uvicorn factory" (Phase 5.1 review). ``create_production_app``
+    must be a regular sync callable returning a ``FastAPI``; if it
+    becomes ``async def`` again Uvicorn would receive a coroutine.
+    """
+    import inspect
+
+    assert not inspect.iscoroutinefunction(bootstrap.create_production_app), (
+        "create_production_app must be sync for `uvicorn --factory` to work"
+    )
+    app = bootstrap.create_production_app()
+    assert isinstance(app, FastAPI)
+    # The app is *not* wired yet — wiring happens in lifespan startup.
+    state = app.state.wake
+    assert state.agent_store is None
+    assert state.dispatcher is None
+
+
+@pytest.mark.asyncio
+async def test_sync_factory_wires_components_in_lifespan() -> None:
+    """Drive the lifespan and verify components arrive before requests."""
+    import contextlib
+
+    app = bootstrap.create_production_app()
+    # Manually drive the lifespan so we exercise the same code path
+    # Uvicorn does on real startup.
+    async with contextlib.AsyncExitStack() as stack:
+        await stack.enter_async_context(app.router.lifespan_context(app))
+        state = app.state.wake
+        assert state.agent_store is not None
+        assert state.session_store is not None
+        assert state.dispatcher is not None
+        # Hit /health through ASGI to prove the wired app actually
+        # responds — the same shape Uvicorn would serve.
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.get("/health")
+            assert resp.status_code == 200
+            assert resp.json()["components"]["agent_store"] is True
+
+
+def test_uvicorn_factory_loads_app_without_crashing() -> None:
+    """Smoke test the exact path ``wake server`` uses.
+
+    Loads the factory the way Uvicorn does (via the import string + sync
+    call) and asserts we get a real FastAPI instance. If
+    ``create_production_app`` regressed to ``async def`` this test would
+    fail with "got coroutine, expected ASGI app".
+    """
+    import importlib
+
+    mod = importlib.import_module("wake.api.bootstrap")
+    factory = mod.create_production_app
+    # Uvicorn does this:
+    instance = factory()
+    assert isinstance(instance, FastAPI), (
+        f"Uvicorn factory must return FastAPI, got {type(instance).__name__}"
+    )

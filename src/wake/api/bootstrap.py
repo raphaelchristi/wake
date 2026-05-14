@@ -14,9 +14,18 @@ In production we need the opposite shape: a single entry point that
 5. Returns a fully-wired FastAPI application.
 
 ``uvicorn`` will import this module via ``--factory wake.api.bootstrap:create_production_app``
-when launched through ``wake server``. The factory shape (an async callable
-returning a FastAPI) keeps initialisation off the import path so failures
-surface in the lifespan boot rather than at module-load time.
+when launched through ``wake server``. ``create_production_app`` is a
+**synchronous** callable that returns a FastAPI app immediately — async
+initialisation (store ``initialize()``, adapter discovery, etc.) runs in
+the app's lifespan startup, which is what Uvicorn awaits before
+accepting traffic. Keeping the factory sync is mandatory: Uvicorn calls
+``app_factory()`` from a sync context and treats anything returned as
+the ASGI app; an ``async def`` would hand back a coroutine and crash on
+the first request.
+
+Tests that need a fully-wired app *outside* a real Uvicorn loop should
+call :func:`build_components` + :func:`create_app` directly, or import
+:func:`create_production_app_async` and ``await`` it.
 
 Environment surface
 -------------------
@@ -46,20 +55,22 @@ Variable                    Meaning
 from __future__ import annotations
 
 import os
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any, cast
 
 import structlog
+from fastapi import FastAPI
 
 from wake.adapters.registry import AdapterRegistry
 from wake.api.app import create_app
+from wake.api.dependencies import AppState
 from wake.core.event_log import EventLog
 from wake.core.session import SessionStateMachine
 from wake.runtime.dispatcher import SessionDispatcher
 from wake.tools.registry import ToolRegistry
 
 if TYPE_CHECKING:
-    from fastapi import FastAPI
-
     from wake.sandbox.base import SandboxAdapter
 
 logger = structlog.get_logger(__name__)
@@ -279,17 +290,83 @@ async def build_components(
     }
 
 
-async def create_production_app() -> FastAPI:
-    """Build a fully-wired production FastAPI app.
+def create_production_app() -> FastAPI:
+    """Build a production FastAPI app — **synchronous Uvicorn factory**.
 
     Reads configuration from environment variables (see module docstring).
     Designed for use with ``uvicorn --factory``:
 
         uvicorn wake.api.bootstrap:create_production_app --factory
 
-    The returned app is identical in shape to ``wake.api.app.create_app``
-    — the only difference is that *every* component is non-``None``, so
-    routes never return 501 "not configured" in production.
+    Uvicorn invokes factories from a synchronous context and expects a
+    raw ASGI app — not a coroutine. We therefore return a ``FastAPI``
+    instance immediately, wiring an *empty* :class:`AppState` and
+    deferring all async initialisation (store ``initialize()``, adapter
+    discovery, sandbox/vault construction) to the lifespan startup
+    handler, which Uvicorn awaits before accepting traffic.
+
+    For a fully-initialised app *outside* a Uvicorn loop (tests,
+    scripts, the worker entrypoint), use :func:`create_production_app_async`.
+    """
+    app = create_app()  # all components None → empty shell
+
+    @asynccontextmanager
+    async def _wired_lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        # 1. Bootstrap everything async.
+        components = await build_components()
+        store = components["store"]
+        # 2. Mutate the AppState in place — routes already hold a
+        #    ``request.app.state.wake`` reference, so swapping
+        #    individual fields is enough; we do *not* rebind the
+        #    container itself.
+        state: AppState = _app.state.wake
+        state.agent_store = store.agents
+        state.environment_store = store.environments
+        state.session_store = store.sessions
+        state.event_log = components["event_log"]
+        state.session_machine = components["session_machine"]
+        state.tool_registry = components["tool_registry"]
+        state.sandbox = components["sandbox"]
+        state.adapter_registry = components["adapter_registry"]
+        state.dispatcher = components["dispatcher"]
+        state.vault = components["vault"]
+        # Stash the store for shutdown.
+        _app.state.wake_store = store
+        logger.info(
+            "bootstrap.app.ready",
+            adapters=components["adapter_registry"].names(),
+        )
+        try:
+            yield
+        finally:
+            # Cleanup sandbox handles + close the store.
+            if state.sandbox is not None:
+                for handle in list(state.sandbox_handles.values()):
+                    try:
+                        await state.sandbox.destroy(handle)  # type: ignore[arg-type]
+                    except Exception:  # noqa: BLE001
+                        logger.warning("bootstrap.sandbox.destroy_failed")
+                state.sandbox_handles.clear()
+            close = getattr(store, "close", None)
+            if close is not None:
+                try:
+                    await close()
+                except Exception:  # noqa: BLE001
+                    logger.warning("bootstrap.store.close_failed")
+
+    # Replace the empty-shell lifespan on the FastAPI instance.
+    # Starlette caches the lifespan on the router; assigning it here is
+    # the simplest stable hook across Starlette versions.
+    app.router.lifespan_context = _wired_lifespan
+    return app
+
+
+async def create_production_app_async() -> FastAPI:
+    """Async sibling of :func:`create_production_app` for direct awaiting.
+
+    Use from tests/scripts where there is no Uvicorn loop to drive the
+    lifespan. Returns an app whose ``AppState`` is already populated
+    (no lifespan dependency required).
     """
     components = await build_components()
     store = components["store"]
@@ -319,4 +396,5 @@ __all__ = [
     "build_store",
     "build_vault",
     "create_production_app",
+    "create_production_app_async",
 ]
