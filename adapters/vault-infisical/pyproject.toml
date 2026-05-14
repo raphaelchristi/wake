@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "wake-vault-infisical"
-version = "0.1.0"
+version = "0.2.0"
 description = "Wake VaultAdapter backed by Infisical Agent Vault. OAuth + HTTPS proxy + CLI."
 readme = "README.md"
 requires-python = ">=3.11"

@@ -1,4 +1,4 @@
-# ruff: noqa: B008, BLE001
+# ruff: noqa: B008, BLE001, TC001
 """Vault routes — drive the dashboard ``/vault`` page.
 
 The dashboard never holds raw credentials. These routes return only
@@ -31,9 +31,16 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 
-from wake.api.dependencies import AppState, get_state, get_vault, require_role
+from wake.api.dependencies import (
+    AppState,
+    get_state,
+    get_tenant_context,
+    get_vault,
+    require_role,
+)
 from wake.api.oauth_state import OAuthStateError, sign_state, verify_state
 from wake.rbac import Role
+from wake.tenancy import TenantContext
 
 logger = structlog.get_logger(__name__)
 
@@ -75,6 +82,8 @@ class CredentialMetadataDTO(BaseModel):
     created_at: datetime
     expires_at: datetime | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+    organization_id: str = "default"
+    workspace_id: str = "default"
 
 
 class CredentialList(BaseModel):
@@ -89,6 +98,8 @@ class AuditEntry(BaseModel):
     decision: str
     vault_id: str | None = None
     detail: str | None = None
+    organization_id: str = "default"
+    workspace_id: str = "default"
 
 
 class AuditList(BaseModel):
@@ -105,10 +116,24 @@ class RotateRequest(BaseModel):
 
 
 @router.get("/credentials", response_model=CredentialList)
-async def list_credentials(vault: Any = Depends(get_vault)) -> CredentialList:
-    """Return all credential metadata. Tokens are never included."""
+async def list_credentials(
+    tenant: TenantContext = Depends(get_tenant_context),
+    vault: Any = Depends(get_vault),
+) -> CredentialList:
+    """Return credential metadata scoped to the request tenant.
+
+    Phase 6.1 finding #1 fix — every read filters by
+    ``organization_id`` + ``workspace_id``. Adapters that pre-date the
+    tenant kwargs still work (Python ignores unknown kwargs only when
+    the method accepts ``**kwargs``; we call positionally-named so old
+    adapters surface as a clear TypeError instead of silently leaking
+    everything cross-tenant).
+    """
     try:
-        items = await vault.list()
+        items = await vault.list(
+            organization_id=tenant.organization_id,
+            workspace_id=tenant.workspace_id,
+        )
     except Exception as exc:
         logger.exception("vault_list_failed")
         raise HTTPException(status_code=502, detail=f"vault list failed: {exc}") from exc
@@ -127,6 +152,12 @@ async def list_credentials(vault: Any = Depends(get_vault)) -> CredentialList:
                     for k, v in (getattr(item, "metadata", {}) or {}).items()
                     if k != "access_token"
                 },
+                organization_id=str(
+                    getattr(item, "organization_id", tenant.organization_id)
+                ),
+                workspace_id=str(
+                    getattr(item, "workspace_id", tenant.workspace_id)
+                ),
             )
             for item in items
         ]
@@ -163,14 +194,17 @@ async def _start_oauth_flow(
     provider: str,
     scopes: list[str] | None,
     redirect_uri: str | None,
+    tenant: TenantContext,
     vault_id_to_rotate: str | None = None,
 ) -> OAuthStartResponse:
     """Internal helper: build authorize URL with a signed ``state`` token.
 
     Used by both ``POST /oauth/start`` and ``POST /credentials/{id}/rotate``.
     The signed state carries ``provider`` + ``redirect_uri`` + optional
-    ``vault_id_to_rotate`` so the callback can complete without any
-    per-process map (fix for finding #4).
+    ``vault_id_to_rotate`` + the tenant scope (Phase 6.1 finding #1).
+    The callback rejects a state whose embedded tenant does not match
+    the request tenant — so a cross-workspace replay cannot land a
+    credential in someone else's vault.
     """
     if provider not in SUPPORTED_PROVIDERS:
         raise HTTPException(
@@ -205,6 +239,8 @@ async def _start_oauth_flow(
         "provider": provider,
         "scopes": list(scopes or []),
         "redirect_uri": cfg["redirect_uri"],
+        "organization_id": tenant.organization_id,
+        "workspace_id": tenant.workspace_id,
     }
     if vault_id_to_rotate:
         state_payload["vault_id_to_rotate"] = vault_id_to_rotate
@@ -218,7 +254,13 @@ async def _start_oauth_flow(
     )
     url, returned_state = flow.build_authorize_url(scopes=scopes, state=signed)
 
-    _audit(app_state, decision="oauth_start", provider=provider)
+    _audit(
+        app_state,
+        decision="oauth_start",
+        provider=provider,
+        organization_id=tenant.organization_id,
+        workspace_id=tenant.workspace_id,
+    )
 
     return OAuthStartResponse(provider=provider, auth_url=url, state=returned_state)
 
@@ -231,6 +273,7 @@ async def _start_oauth_flow(
 async def oauth_start(
     body: OAuthStartRequest,
     request: Request,
+    tenant: TenantContext = Depends(get_tenant_context),
     vault: Any = Depends(get_vault),  # noqa: ARG001 - 503 if vault missing
 ) -> OAuthStartResponse:
     """Start an OAuth Authorization Code flow for ``body.provider``.
@@ -238,7 +281,9 @@ async def oauth_start(
     Returns ``{auth_url, state}`` where ``state`` is a signed token
     (HMAC-SHA256) instead of an opaque server-side handle. Multi-replica
     deploys can complete the callback on any pod that shares
-    ``WAKE_OAUTH_STATE_SECRET``.
+    ``WAKE_OAUTH_STATE_SECRET``. The state token also carries the
+    request tenant scope; the callback rejects mismatched tenants
+    (Phase 6.1 finding #1).
     """
     app_state = get_state(request)
     return await _start_oauth_flow(
@@ -246,6 +291,7 @@ async def oauth_start(
         provider=body.provider,
         scopes=body.scopes,
         redirect_uri=body.redirect_uri,
+        tenant=tenant,
     )
 
 
@@ -259,6 +305,7 @@ async def oauth_callback(
     request: Request,
     code: str = Query(..., description="Authorization code from the provider"),
     state: str = Query(..., description="Signed state echoed by the provider"),
+    tenant: TenantContext = Depends(get_tenant_context),
     vault: Any = Depends(get_vault),
 ) -> CredentialMetadataDTO:
     """Exchange an OAuth ``code`` for an access token, then store it.
@@ -267,13 +314,24 @@ async def oauth_callback(
     fix) — any replica that shares ``WAKE_OAUTH_STATE_SECRET`` can verify
     it. If the decoded payload carries ``vault_id_to_rotate`` we route to
     ``vault.replace`` (rotate); otherwise ``vault.add`` (initial add).
+
+    Phase 6.1 finding #1: the state also carries the tenant scope set at
+    ``oauth/start`` time. If the request tenant does not match the
+    embedded one, we refuse — without leaking which scope the state
+    belonged to.
     """
     app_state = get_state(request)
 
     try:
         decoded = verify_state(state)
     except OAuthStateError as exc:
-        _audit(app_state, decision="oauth_failed", detail=f"state: {exc}")
+        _audit(
+            app_state,
+            decision="oauth_failed",
+            detail=f"state: {exc}",
+            organization_id=tenant.organization_id,
+            workspace_id=tenant.workspace_id,
+        )
         # Be explicit about what went wrong so old clients holding pre-5.1
         # opaque-UUID states see a clear error instead of an empty 400.
         raise HTTPException(
@@ -288,6 +346,26 @@ async def oauth_callback(
     if vault_id_to_rotate is not None and not isinstance(vault_id_to_rotate, str):
         raise HTTPException(
             status_code=400, detail="invalid state: vault_id_to_rotate must be str"
+        )
+
+    # Tenant claim check (Phase 6.1 finding #1). States minted before
+    # this release have no embedded tenant — default them to
+    # ``default/default`` for back-compat. New states always carry the
+    # scope of the request that called ``oauth/start``.
+    state_org = str(decoded.get("organization_id", "default"))
+    state_ws = str(decoded.get("workspace_id", "default"))
+    if state_org != tenant.organization_id or state_ws != tenant.workspace_id:
+        _audit(
+            app_state,
+            decision="oauth_failed",
+            provider=provider,
+            detail="tenant mismatch",
+            organization_id=tenant.organization_id,
+            workspace_id=tenant.workspace_id,
+        )
+        # Opacity: don't disclose what scope the state belonged to.
+        raise HTTPException(
+            status_code=400, detail="invalid or expired OAuth state: tenant mismatch"
         )
 
     # Rebuild the flow from env-resolved config. Multi-replica safe: every
@@ -344,6 +422,8 @@ async def oauth_callback(
                     provider=provider,
                     scopes=scopes or None,
                     metadata={"oauth_source": "dashboard", "rotated": True},
+                    organization_id=tenant.organization_id,
+                    workspace_id=tenant.workspace_id,
                 )
             else:
                 # Defensive: degrade to add + best-effort revoke.
@@ -357,9 +437,15 @@ async def oauth_callback(
                     value=token,
                     scopes=scopes or None,
                     metadata={"oauth_source": "dashboard", "rotated": True},
+                    organization_id=tenant.organization_id,
+                    workspace_id=tenant.workspace_id,
                 )
                 try:
-                    await vault.revoke(vault_id_to_rotate)
+                    await vault.revoke(
+                        vault_id_to_rotate,
+                        organization_id=tenant.organization_id,
+                        workspace_id=tenant.workspace_id,
+                    )
                 except Exception:  # noqa: BLE001
                     logger.warning(
                         "vault_legacy_revoke_after_rotate_failed",
@@ -377,6 +463,8 @@ async def oauth_callback(
             provider=provider,
             vault_id=getattr(meta, "vault_id", None),
             detail=f"rotated_from={vault_id_to_rotate}",
+            organization_id=tenant.organization_id,
+            workspace_id=tenant.workspace_id,
         )
     else:
         name = f"{provider}_token_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}"
@@ -387,6 +475,8 @@ async def oauth_callback(
                 value=token,
                 scopes=scopes or None,
                 metadata={"oauth_source": "dashboard"},
+                organization_id=tenant.organization_id,
+                workspace_id=tenant.workspace_id,
             )
         except Exception as exc:
             logger.exception("vault_add_failed", provider=provider)
@@ -397,6 +487,8 @@ async def oauth_callback(
             decision="oauth_success",
             provider=provider,
             vault_id=getattr(meta, "vault_id", None),
+            organization_id=tenant.organization_id,
+            workspace_id=tenant.workspace_id,
         )
 
     return CredentialMetadataDTO(
@@ -411,6 +503,8 @@ async def oauth_callback(
             for k, v in (getattr(meta, "metadata", {}) or {}).items()
             if k != "access_token"
         },
+        organization_id=str(getattr(meta, "organization_id", tenant.organization_id)),
+        workspace_id=str(getattr(meta, "workspace_id", tenant.workspace_id)),
     )
 
 
@@ -429,6 +523,7 @@ async def rotate_credential(
     vault_id: str,
     body: RotateRequest,
     request: Request,
+    tenant: TenantContext = Depends(get_tenant_context),
     vault: Any = Depends(get_vault),
 ) -> OAuthStartResponse:
     """Start a new OAuth flow that will *replace* ``vault_id`` on callback.
@@ -439,9 +534,18 @@ async def rotate_credential(
     (Phase 5.1 finding #5 fix). The old credential is revoked atomically
     inside ``replace``, so there is no need for the operator to also
     issue a ``DELETE`` afterwards.
+
+    Phase 6.1 finding #1: ``get_metadata`` is tenant-scoped, so attempts
+    to rotate a credential that belongs to another workspace surface as
+    plain 404. The state token signed by ``_start_oauth_flow`` also
+    carries the caller's tenant claim.
     """
     try:
-        meta = await vault.get_metadata(vault_id)
+        meta = await vault.get_metadata(
+            vault_id,
+            organization_id=tenant.organization_id,
+            workspace_id=tenant.workspace_id,
+        )
     except Exception as exc:
         raise HTTPException(status_code=404, detail=f"credential not found: {exc}") from exc
 
@@ -454,6 +558,7 @@ async def rotate_credential(
         provider=provider,
         scopes=scopes,
         redirect_uri=body.redirect_uri,
+        tenant=tenant,
         vault_id_to_rotate=vault_id,
     )
 
@@ -462,6 +567,8 @@ async def rotate_credential(
         decision="rotate_started",
         provider=provider,
         vault_id=vault_id,
+        organization_id=tenant.organization_id,
+        workspace_id=tenant.workspace_id,
     )
     return start_resp
 
@@ -479,11 +586,22 @@ async def rotate_credential(
 async def revoke_credential(
     vault_id: str,
     request: Request,
+    tenant: TenantContext = Depends(get_tenant_context),
     vault: Any = Depends(get_vault),
 ) -> None:
-    """Revoke a vault credential. Idempotent (404 is swallowed)."""
+    """Revoke a vault credential. Idempotent (404 is swallowed).
+
+    Phase 6.1 finding #1: revoke is tenant-scoped. Cross-tenant revoke
+    requests behave like missing entries — the adapter silently no-ops,
+    so the caller cannot probe the existence of credentials in other
+    workspaces by issuing destructive ops.
+    """
     try:
-        await vault.revoke(vault_id)
+        await vault.revoke(
+            vault_id,
+            organization_id=tenant.organization_id,
+            workspace_id=tenant.workspace_id,
+        )
     except Exception as exc:
         # Idempotent revoke — VaultAdapter.revoke contract says no error
         # on missing IDs. Defensive: surface 502 if the vault itself is sick.
@@ -494,6 +612,8 @@ async def revoke_credential(
         get_state(request),
         decision="revoked",
         vault_id=vault_id,
+        organization_id=tenant.organization_id,
+        workspace_id=tenant.workspace_id,
     )
 
 
@@ -510,13 +630,23 @@ async def list_audit(
     provider: str | None = Query(None),
     host: str | None = Query(None),
     decision: str | None = Query(None),
+    tenant: TenantContext = Depends(get_tenant_context),
     vault: Any = Depends(get_vault),  # noqa: ARG001 - 503 if missing
 ) -> AuditList:
-    """Return recent vault accesses (in-memory single-process log)."""
+    """Return recent vault accesses scoped to the request tenant.
+
+    Phase 6.1 finding #1: audit entries are tenant-tagged at write
+    time. Entries without tenant metadata (legacy / pre-6.1) default to
+    ``default/default`` and are visible only to that scope.
+    """
     state = get_state(request)
     entries: list[AuditEntry] = []
     for raw in state.vault_audit:
         if not isinstance(raw, dict):
+            continue
+        entry_org = str(raw.get("organization_id", "default"))
+        entry_ws = str(raw.get("workspace_id", "default"))
+        if entry_org != tenant.organization_id or entry_ws != tenant.workspace_id:
             continue
         ts_raw = raw.get("timestamp")
         ts = (
@@ -543,6 +673,8 @@ async def list_audit(
                 decision=str(raw.get("decision", "unknown")),
                 vault_id=raw.get("vault_id"),  # type: ignore[arg-type]
                 detail=raw.get("detail"),  # type: ignore[arg-type]
+                organization_id=entry_org,
+                workspace_id=entry_ws,
             )
         )
 
@@ -565,6 +697,8 @@ def _audit(
     session_id: str | None = None,
     vault_id: str | None = None,
     detail: str | None = None,
+    organization_id: str = "default",
+    workspace_id: str = "default",
 ) -> None:
     state.vault_audit.append(
         {
@@ -575,6 +709,8 @@ def _audit(
             "session_id": session_id,
             "vault_id": vault_id,
             "detail": detail,
+            "organization_id": organization_id,
+            "workspace_id": workspace_id,
         }
     )
     # Cap to 5k entries to keep memory bounded.

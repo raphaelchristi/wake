@@ -61,6 +61,9 @@ Minimum viable config:
 ```yaml
 backup:
   enabled: true
+  # REQUIRED when backup.enabled=true (Phase 6.1 finding #5).
+  # Cluster-unique repository identity. See "Bucket sharing rules" below.
+  repositoryId: "prod-eu-west-1"
   s3:
     endpoint: "https://s3.amazonaws.com"
     bucket: "wake-backups-prod"
@@ -69,6 +72,32 @@ backup:
     # sealed-secrets / external-secrets-operator and reference it by name.
     secretName: "wake-backup-s3-creds"
 ```
+
+### Bucket sharing rules (Phase 6.1 finding #5)
+
+Multiple Wake clusters can safely share the same S3 bucket **only** when
+`backup.repositoryId` is set to a cluster-unique value. This identity is
+woven into both:
+
+* the pgbackrest **stanza** (default: `<repositoryId>-<release>`)
+* the **`repo1-path`** in the bucket (`/pgbackrest/<repositoryId>`)
+
+Two clusters that share a bucket and a release name without this value
+would have collided on `wake-wake` + `/pgbackrest` — backups, WAL
+archive metadata, retention expiry, and restore targets would all
+interleave silently, and a restore could load the wrong cluster's data.
+The Helm chart now refuses to render when `backup.enabled=true` and
+`backup.repositoryId` is empty.
+
+Recommended naming pattern: `<environment>-<region>` (e.g.
+`prod-eu-west-1`) or `<cluster>-<namespace>-<release>` for richer
+isolation. The value MUST match `^[a-z0-9][a-z0-9-]{0,62}$`.
+
+Once set, **never change `backup.repositoryId`**: the new value points
+at an empty repo path. Migrating to a new id requires running
+`pgbackrest stanza-create` against the new path, copying the archive,
+and re-bootstrapping retention.
+
 
 The referenced Secret must contain two keys:
 

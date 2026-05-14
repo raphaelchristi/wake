@@ -281,6 +281,14 @@ async def get_current_user(
     if not user_id:
         raise HTTPException(status_code=401, detail="user id required")
 
+    # Phase 6.1 finding #3 fix (defense-in-depth): refuse the reserved
+    # ``system`` id at the dependency layer even when RBAC is on,
+    # regardless of what the store returns. The DB now also rejects
+    # the row via CHECK constraint, but this guard catches in-memory
+    # stores + future stores that ship without the constraint.
+    if user_id == "system":
+        raise HTTPException(status_code=401, detail="unknown user")
+
     state = get_state(request)
     store = state.user_store
     if store is None:

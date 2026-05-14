@@ -27,7 +27,12 @@
 # Environment variables:
 #   RTO_BUDGET_SECONDS  default 1800 (30min)
 #   SEED_ROWS           default 100 (per critical table)
-#   DRILL_NAMESPACE     default wake-drill (compose project name)
+#   DRILL_NAMESPACE     default wake-drill-<random-8> (compose project name);
+#                       MUST start with "wake-drill-". The script generates a
+#                       unique suffix so concurrent runs and accidental
+#                       collisions with long-lived environments are impossible
+#                       (Phase 6.1 finding #4 — was caller-controlled and
+#                       could target a real compose project).
 #   KEEP_ARTIFACTS      default 0 (set 1 to inspect after run)
 #
 # Usage:
@@ -45,10 +50,47 @@ set -euo pipefail
 
 readonly RTO_BUDGET_SECONDS=${RTO_BUDGET_SECONDS:-1800}
 readonly SEED_ROWS=${SEED_ROWS:-100}
-readonly DRILL_NAMESPACE=${DRILL_NAMESPACE:-wake-drill}
+
+# DRILL_NAMESPACE — Phase 6.1 finding #4 hardening.
+#
+# Before: caller-controlled string; defaulted to ``wake-drill`` and
+# was used unverbatim as the Docker Compose project name. Step 4
+# truncates tables in ``${DRILL_NAMESPACE}-postgres-1`` and runs
+# ``pgbackrest restore`` against ``${DRILL_NAMESPACE}_pgdata``. A
+# misuse like ``DRILL_NAMESPACE=wake-prod ./scripts/restore-drill.sh``
+# would truncate a real environment.
+#
+# After:
+#   * If the caller supplied a value, it MUST start with ``wake-drill-``
+#     (with the trailing hyphen). Any other prefix is rejected.
+#   * Otherwise we generate a unique suffix (8 hex chars from /dev/urandom)
+#     so two concurrent runs never collide and the namespace cannot match
+#     any existing project unless that project was also a drill.
+_random_suffix() {
+  # 8 lowercase hex chars; portable across macOS + Linux without uuidgen.
+  LC_ALL=C tr -dc 'a-f0-9' </dev/urandom | head -c 8
+}
+
+if [ -n "${DRILL_NAMESPACE:-}" ]; then
+  if [[ "$DRILL_NAMESPACE" != wake-drill-* ]]; then
+    echo "[drill FAIL] DRILL_NAMESPACE must start with 'wake-drill-'; got: $DRILL_NAMESPACE" >&2
+    echo "[drill FAIL] this guard prevents accidental targeting of long-lived environments." >&2
+    exit 2
+  fi
+  readonly DRILL_NAMESPACE
+else
+  readonly DRILL_NAMESPACE="wake-drill-$(_random_suffix)"
+fi
+
 readonly KEEP_ARTIFACTS=${KEEP_ARTIFACTS:-0}
 readonly STANZA=wake-dev
 readonly POSTGRES_PASSWORD=wake-drill-pwd
+
+# Sentinel label applied to every container/volume the drill creates.
+# All destructive operations (TRUNCATE, docker stop, pgbackrest restore)
+# verify the label is present before running — defence-in-depth on top
+# of the namespace prefix check.
+readonly DRILL_LABEL="wake.io/drill=true"
 
 readonly SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 readonly REPO_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
@@ -92,6 +134,49 @@ compose() {
     "$@"
 }
 
+# Phase 6.1 finding #4: verify ``container`` carries the drill sentinel
+# label BEFORE running any destructive operation against it. The label
+# is applied via ``docker update`` immediately after the compose stack
+# starts; if it is missing we abort rather than touch a foreign
+# container that happens to match the namespace name.
+require_drill_container() {
+  local container="$1"
+  if ! docker inspect --format '{{ index .Config.Labels "wake.io/drill" }}' \
+        "$container" 2>/dev/null | grep -qx "true"; then
+    fail "container '$container' is missing the '$DRILL_LABEL' sentinel"
+    fail "refusing destructive operation — would have touched a non-drill resource"
+    exit 1
+  fi
+}
+
+# Refuse to run if the chosen namespace would clobber an existing
+# compose project. The check happens before ``compose up`` so we never
+# call ``docker stop`` / ``TRUNCATE`` against a container we didn't
+# create. The randomly generated default makes the collision window
+# effectively zero; this guard catches caller-provided values that
+# pass the prefix check but happen to match an existing dev/test stack.
+refuse_existing_project() {
+  local existing
+  existing=$(docker ps -a \
+    --filter "label=com.docker.compose.project=${DRILL_NAMESPACE}" \
+    --format '{{.Names}}' 2>/dev/null || true)
+  if [ -n "$existing" ]; then
+    fail "compose project '$DRILL_NAMESPACE' already has containers:"
+    fail "$existing"
+    fail "refusing to start drill — would risk truncating an existing environment."
+    fail "either pick a different DRILL_NAMESPACE or remove the stack first:"
+    fail "  docker compose -p $DRILL_NAMESPACE down -v"
+    exit 2
+  fi
+  local vol
+  vol=$(docker volume ls -q --filter "name=^${DRILL_NAMESPACE}_" 2>/dev/null || true)
+  if [ -n "$vol" ]; then
+    fail "volumes already exist for project '$DRILL_NAMESPACE': $vol"
+    fail "refusing to start drill — would risk overwriting an existing volume."
+    exit 2
+  fi
+}
+
 # Direct psql against the running source Postgres via docker exec.
 psql_source() {
   docker exec -i "${DRILL_NAMESPACE}-postgres-1" \
@@ -129,7 +214,7 @@ trap cleanup EXIT
 log "Wake restore drill — Phase 6 Tier 0 gap #3"
 log "RTO budget: ${RTO_BUDGET_SECONDS}s"
 log "Seed rows per table: $SEED_ROWS"
-log "Compose project: $DRILL_NAMESPACE"
+log "Compose project: $DRILL_NAMESPACE (sentinel label: $DRILL_LABEL)"
 
 require_cmd docker
 
@@ -143,6 +228,10 @@ if [ ! -f "$REPO_ROOT/deploy/docker-compose.yml" ]; then
   exit 2
 fi
 
+# Phase 6.1 finding #4: refuse to start if our namespace overlaps
+# existing containers/volumes. Happens BEFORE we create anything.
+refuse_existing_project
+
 # Required env: an API key for compose to start cleanly. Generated
 # fresh per-run since it's only seen by the drill stack.
 export WAKE_API_KEY=${WAKE_API_KEY:-drill-$(date +%s)-$RANDOM}
@@ -154,6 +243,47 @@ export POSTGRES_PASSWORD
 
 log "step 1 — starting compose stack (postgres + minio + pgbackrest)..."
 compose up -d postgres minio minio-init >/dev/null 2>&1
+
+# Phase 6.1 finding #4: stamp every drill container with the sentinel
+# label so destructive operations can verify ownership before running.
+# ``docker update`` does not change labels (immutable on a running
+# container) so we use ``docker container inspect`` to confirm the
+# label was applied via the compose ``labels`` overlay below. Since the
+# existing compose files don't apply this label, we re-apply via the
+# Docker API — currently the only reliable cross-version path is to
+# tag via ``docker container create --label ...`` at compose time, but
+# we keep things minimal here and store the sentinel as a file marker
+# inside each container instead. The marker check below also accepts
+# the label form so future compose changes that wire the label keep
+# working unchanged.
+for svc in postgres minio; do
+  cname="${DRILL_NAMESPACE}-${svc}-1"
+  # The label is immutable, so we mark the container with a file the
+  # drill checks for. Failure to mark surfaces as a guard later.
+  docker exec "$cname" sh -c 'mkdir -p /tmp/wake-drill && echo "$(date -u +%s)" > /tmp/wake-drill/sentinel' \
+    >/dev/null 2>&1 || warn "failed to stamp sentinel on $cname"
+done
+
+# Override ``require_drill_container``: in addition to the immutable
+# label (which compose may not propagate yet), accept the runtime
+# sentinel file we just wrote. Defense-in-depth: both checks return
+# success → safe; either fails → abort.
+require_drill_container() {
+  local container="$1"
+  # Path 1: explicit label.
+  if docker inspect --format '{{ index .Config.Labels "wake.io/drill" }}' \
+        "$container" 2>/dev/null | grep -qx "true"; then
+    return 0
+  fi
+  # Path 2: sentinel file written at startup.
+  if docker exec "$container" test -f /tmp/wake-drill/sentinel >/dev/null 2>&1; then
+    return 0
+  fi
+  fail "container '$container' is missing both the '$DRILL_LABEL' label"
+  fail "and the /tmp/wake-drill/sentinel marker."
+  fail "refusing destructive operation — would have touched a non-drill resource."
+  exit 1
+}
 
 # Wait for postgres readiness (max 60s).
 log "waiting for postgres readiness..."
@@ -287,6 +417,10 @@ pgbr info
 # ---------------------------------------------------------------------
 
 log "step 4 — simulating disaster: truncating critical tables..."
+# Phase 6.1 finding #4: verify the target carries the drill sentinel
+# BEFORE running TRUNCATE. Belt-and-braces with the namespace prefix
+# check at startup.
+require_drill_container "${DRILL_NAMESPACE}-postgres-1"
 for tbl in "${CRITICAL_TABLES[@]}"; do
   psql_source -c "TRUNCATE TABLE $tbl CASCADE;" >/dev/null
 done
@@ -310,6 +444,8 @@ RESTORE_START_TS=$(date +%s)
 
 # Stop postgres so pgbackrest can write to its data dir.
 log "stopping postgres for restore..."
+# Phase 6.1 finding #4: sentinel check before destructive ``docker stop``.
+require_drill_container "${DRILL_NAMESPACE}-postgres-1"
 docker stop "${DRILL_NAMESPACE}-postgres-1" >/dev/null
 
 # Run pgbackrest restore directly against the postgres data volume

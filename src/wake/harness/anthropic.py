@@ -114,7 +114,12 @@ class AnthropicHarness:
             vault_id=None,
             metadata=session.metadata,
         )
-        events_view = WakeEventStream(self._events, session.id)
+        events_view = WakeEventStream(
+            self._events,
+            session.id,
+            organization_id=session.organization_id,
+            workspace_id=session.workspace_id,
+        )
         tools_view = WakeToolRegistry(self._tools, sandbox_handle=sandbox_handle)
 
         # tool_use → tool_result correlation: in Phase 1, tool_result
@@ -127,12 +132,17 @@ class AnthropicHarness:
             if emitted.type == "tool_result" and last_tool_use_id is not None:
                 parent_id = last_tool_use_id
 
+            # Phase 6.1 finding #2 fix: persist with the session's
+            # tenant scope. Without this, non-default workspaces saw
+            # assistant/tool/status events land in default/default.
             persisted = await self._events.append(
                 session.id,
                 emitted.type,
                 emitted.payload,
                 parent_id=parent_id,
                 metadata=emitted.metadata,
+                organization_id=session.organization_id,
+                workspace_id=session.workspace_id,
             )
 
             if emitted.type == "tool_use":
