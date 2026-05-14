@@ -240,6 +240,51 @@ observability:
     serviceNamePrefix: "wake"
 
 # ---------------------------------------------------------------------------
+# Monitoring — Prometheus ServiceMonitor (Phase 7 / Tier 1 gap #8).
+#
+# Opt-in. Renders a ServiceMonitor CR that kube-prometheus-stack
+# (or any Operator-managed Prometheus) discovers and scrapes /metrics
+# on the wake-api Service. The /metrics endpoint is unauthenticated
+# by Prometheus convention — restrict at the network layer with a
+# NetworkPolicy that allows only the monitoring namespace.
+#
+# REQUIREMENT: the cluster must have the monitoring.coreos.com/v1
+# ServiceMonitor CRD installed (provided by kube-prometheus-stack /
+# Prometheus Operator). If the CRD is missing, ``helm install`` will
+# fail with "no matches for kind ServiceMonitor".
+#
+# The ``labels`` map should include whichever discovery selector your
+# Prometheus instance uses. For kube-prometheus-stack defaults that's
+# ``release: prometheus``. Adjust per environment.
+#
+# Cardinality: enable ``WAKE_METRICS_WORKSPACE_LABEL=true`` in the API
+# pod env ONLY if you have ≤ ~100 workspaces in a tenant. With more
+# workspaces, leave it off and aggregate at the dashboard layer.
+# ---------------------------------------------------------------------------
+
+monitoring:
+  enabled: false
+  # Extra labels to merge onto the ServiceMonitor metadata. kube-prom-stack
+  # default selector is `release: prometheus` — set accordingly.
+  labels: {}
+  annotations: {}
+  # Scrape settings — defaults match kube-prometheus-stack global rules.
+  interval: "30s"
+  scrapeTimeout: "10s"
+  scheme: "http"
+  honorLabels: false
+  path: "/metrics"
+  # Forward these target labels onto the scraped series.
+  targetLabels: []
+  # Optional tlsConfig {ca,cert,key,insecureSkipVerify} for HTTPS scrapes.
+  tlsConfig: {}
+  # Relabel rules applied at the target level.
+  relabelings: []
+  # Relabel rules applied to ingested samples (filter out high-cardinality
+  # series here if needed).
+  metricRelabelings: []
+
+# ---------------------------------------------------------------------------
 # Backup — pgbackrest-based Postgres backup to S3-compatible object store.
 #
 # Phase 6 / Tier 0 gap #3. Pgbackrest is a sidecar/cron-driven workflow:

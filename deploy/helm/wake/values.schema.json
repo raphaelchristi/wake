@@ -30,6 +30,32 @@
         "existingSecret": { "type": "string" }
       }
     },
+    "monitoring": {
+      "type": "object",
+      "description": "Prometheus ServiceMonitor opt-in (Phase 7 / Tier 1 gap #8).",
+      "additionalProperties": true,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Master switch. Default false. Set true to render the ServiceMonitor CR (requires kube-prometheus-stack CRDs)."
+        },
+        "labels": {
+          "type": "object",
+          "description": "Extra labels (selector keys for your Prometheus discovery, e.g. {release: prometheus})."
+        },
+        "annotations": { "type": "object" },
+        "interval": { "type": "string" },
+        "scrapeTimeout": { "type": "string" },
+        "scheme": { "type": "string", "enum": ["http", "https"] },
+        "honorLabels": { "type": "boolean" },
+        "path": { "type": "string" },
+        "targetLabels": { "type": "array" },
+        "tlsConfig": { "type": "object" },
+        "relabelings": { "type": "array" },
+        "metricRelabelings": { "type": "array" }
+      },
+      "required": ["enabled"]
+    },
     "backup": {
       "type": "object",
       "description": "Pgbackrest backup configuration (Phase 6 Tier 0 gap #3).",
