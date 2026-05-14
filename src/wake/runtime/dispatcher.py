@@ -91,7 +91,12 @@ class SessionDispatcher:
             vault_id=None,
             metadata=session.metadata,
         )
-        events = WakeEventStream(self._event_log, session.id)
+        events = WakeEventStream(
+            self._event_log,
+            session.id,
+            organization_id=session.organization_id,
+            workspace_id=session.workspace_id,
+        )
         tools = WakeToolRegistry(self._tools, sandbox_handle=sandbox_handle)
 
         # Lifecycle notification before the step. "resumed" if any events
@@ -125,10 +130,16 @@ class SessionDispatcher:
         # scaffolding Protocol.
         stream = cast("AsyncIterator[Event]", adapter.step(ctx, events, tools))
         async for emitted in stream:
+            # Phase 6.1 finding #2 fix: persist with the session's
+            # tenant scope so adapter-emitted events land in the
+            # caller's workspace, not the default fallback that the
+            # EventLog uses when the caller omits the tenant kwargs.
             await self._event_log.append(
                 session.id,
                 emitted.type,
                 emitted.payload,
                 parent_id=emitted.parent_id,
                 metadata=emitted.metadata,
+                organization_id=session.organization_id,
+                workspace_id=session.workspace_id,
             )
