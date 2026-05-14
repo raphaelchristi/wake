@@ -26,6 +26,7 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import (
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Integer,
@@ -152,9 +153,16 @@ class UserRow(Base):
 
     Composite primary key ``(workspace_id, id)`` so the same user id
     can coexist as independent principals across workspaces.
+
+    Phase 6.1 finding #3: a CHECK constraint at the DB layer refuses
+    the reserved ``system`` id (matches the SQLite reference store +
+    the application-layer guard).
     """
 
     __tablename__ = "users"
+    __table_args__ = (
+        CheckConstraint("id <> 'system'", name="ck_users_id_not_system"),
+    )
 
     workspace_id: Mapped[str] = mapped_column(String, primary_key=True)
     id: Mapped[str] = mapped_column(String, primary_key=True)
@@ -166,9 +174,18 @@ class UserRow(Base):
 
 
 class UserRoleRow(Base):
-    """Many-to-many ``(workspace, user, role)`` binding table."""
+    """Many-to-many ``(workspace, user, role)`` binding table.
+
+    Phase 6.1 finding #3: CHECK constraint refuses bindings whose
+    ``user_id`` equals the reserved ``system`` sentinel.
+    """
 
     __tablename__ = "user_roles"
+    __table_args__ = (
+        CheckConstraint(
+            "user_id <> 'system'", name="ck_user_roles_user_not_system"
+        ),
+    )
 
     workspace_id: Mapped[str] = mapped_column(String, primary_key=True)
     user_id: Mapped[str] = mapped_column(String, primary_key=True)

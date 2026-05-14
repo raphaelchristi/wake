@@ -346,6 +346,61 @@ async def test_user_store_create_rejects_reserved_id() -> None:
 
 
 @pytest.mark.asyncio
+async def test_get_current_user_rejects_system_header_even_if_store_returns_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Phase 6.1 finding #3 defense-in-depth.
+
+    Even if a future store path leaks a ``users.id = 'system'`` row past
+    the DB CHECK constraint, ``get_current_user()`` must refuse the
+    request with 401 ``unknown user`` when ``X-Wake-User-Id: system``
+    is sent and RBAC is on.
+    """
+    monkeypatch.setenv("WAKE_RBAC_ENABLED", "true")
+
+    from fastapi import Depends
+    from httpx import ASGITransport, AsyncClient
+
+    from wake.api.app import create_app
+    from wake.api.dependencies import get_current_user
+    from wake.rbac import User
+
+    # Build a store whose ``get`` deliberately returns a User even for
+    # the reserved id — emulating a corrupted DB.
+    class _CompromisedUserStore(InMemoryUserStore):
+        async def get(self, user_id: str, *, workspace_id: str):  # type: ignore[override]
+            if user_id == "system":
+                return User(
+                    id="system",
+                    display_name=None,
+                    roles=(),
+                    organization_id="default",
+                    workspace_id=workspace_id,
+                )
+            return await super().get(user_id, workspace_id=workspace_id)
+
+    app = create_app(user_store=_CompromisedUserStore())
+
+    # Tiny test-only route that probes the dependency directly.
+    @app.get("/__test/me")
+    async def me(user: User = Depends(get_current_user)) -> dict[str, str]:
+        return {"user_id": user.id}
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        res = await ac.get(
+            "/__test/me",
+            headers={
+                "X-Wake-User-Id": "system",
+                "X-Wake-Workspace-Id": "default",
+                "X-Wake-Organization-Id": "default",
+            },
+        )
+        assert res.status_code == 401
+        assert "unknown user" in res.text
+
+
+@pytest.mark.asyncio
 async def test_user_store_assign_revoke_idempotent() -> None:
     store = InMemoryUserStore()
     await store.create("alice", workspace_id="default")

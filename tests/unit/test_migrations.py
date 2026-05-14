@@ -86,3 +86,69 @@ async def test_user_roles_cascade_in_python(store: SQLiteStore) -> None:
     assert (
         await store.users.roles_for("alice", workspace_id="default")
     ) == []
+
+
+async def test_users_table_rejects_system_id_at_db_layer(store: SQLiteStore) -> None:
+    """Phase 6.1 finding #3: ``users.id <> 'system'`` enforced by CHECK.
+
+    Bypass the ``UserStore.create()`` application check by inserting
+    directly via SQL. The DB constraint must refuse the row.
+    """
+    from datetime import UTC, datetime
+
+    from sqlalchemy.exc import IntegrityError
+
+    from wake.store.sqlite import UserRow
+
+    now = datetime.now(UTC)
+    async with store.engine.begin() as conn:
+
+        def _try_insert(sync_conn: object) -> None:
+            sync_conn.execute(  # type: ignore[attr-defined]
+                UserRow.__table__.insert().values(
+                    workspace_id="default",
+                    id="system",
+                    organization_id="default",
+                    display_name=None,
+                    created_at=now,
+                )
+            )
+
+        with pytest.raises(IntegrityError):
+            await conn.run_sync(_try_insert)
+
+
+async def test_user_roles_rejects_system_user_id_at_db_layer(
+    store: SQLiteStore,
+) -> None:
+    """Phase 6.1 finding #3: ``user_roles.user_id <> 'system'`` CHECK.
+
+    The FK on ``user_roles`` references ``users(workspace_id, id)`` so
+    we need a legitimate user row to exist first; the role-side CHECK
+    is what we're proving here.
+    """
+    from datetime import UTC, datetime
+
+    from sqlalchemy.exc import IntegrityError
+
+    from wake.store.sqlite import UserRoleRow
+
+    now = datetime.now(UTC)
+    # Seed an existing valid user so we don't trip the FK side.
+    await store.users.create("alice", workspace_id="default")
+
+    async with store.engine.begin() as conn:
+
+        def _try_insert(sync_conn: object) -> None:
+            sync_conn.execute(  # type: ignore[attr-defined]
+                UserRoleRow.__table__.insert().values(
+                    workspace_id="default",
+                    user_id="system",
+                    role="admin",
+                    organization_id="default",
+                    created_at=now,
+                )
+            )
+
+        with pytest.raises(IntegrityError):
+            await conn.run_sync(_try_insert)

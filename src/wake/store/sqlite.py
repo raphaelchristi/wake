@@ -34,6 +34,7 @@ from typing import Any
 import structlog
 from sqlalchemy import (
     JSON,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Integer,
@@ -158,6 +159,13 @@ class SessionRow(Base):
 
 class UserRow(Base):
     __tablename__ = "users"
+    # Phase 6.1 finding #3 fix: reserved ``system`` id is rejected at
+    # the DB layer too, not only the application layer. A direct SQL
+    # import / manual admin operation can no longer plant a ``system``
+    # row that ``get_current_user()`` would accept as ordinary.
+    __table_args__ = (
+        CheckConstraint("id <> 'system'", name="ck_users_id_not_system"),
+    )
 
     # Composite primary key on (workspace_id, id) so the same user_id
     # can live in two workspaces as two independent principals.
@@ -174,6 +182,12 @@ class UserRow(Base):
 
 class UserRoleRow(Base):
     __tablename__ = "user_roles"
+    # Phase 6.1 finding #3 fix: refuse role bindings for the reserved
+    # ``system`` id so an attacker cannot pre-create a binding that a
+    # later spoofed user row would inherit.
+    __table_args__ = (
+        CheckConstraint("user_id <> 'system'", name="ck_user_roles_user_not_system"),
+    )
 
     # Composite primary key — one row per (workspace, user, role).
     workspace_id: Mapped[str] = mapped_column(String, primary_key=True)
