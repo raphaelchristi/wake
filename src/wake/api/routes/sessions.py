@@ -57,14 +57,29 @@ async def create_session(
     machine: SessionStateMachine = Depends(get_session_machine),
     tenant: TenantContext = Depends(get_tenant_context),
 ) -> Session:
-    agent = await agent_store.get(body.agent_id, workspace_id=tenant.workspace_id)
+    # Phase 8 / Tier 2 gap #12: weighted canary selection. The store's
+    # ``select_for_new_session`` picks the latest stable version OR the
+    # canary version (with probability == canary_weight). When no
+    # canary is configured this resolves to ``get(id)`` semantics.
+    agent = await agent_store.select_for_new_session(
+        body.agent_id, workspace_id=tenant.workspace_id
+    )
     if agent is None:
         raise HTTPException(status_code=404, detail="agent not found")
+    # Carry the selected version into session metadata so the dashboard
+    # can render "this session ran on canary v3" without re-querying
+    # the canary config (which may have changed since session creation).
+    metadata = dict(body.metadata or {})
+    metadata.setdefault("agent_version", str(agent.version))
+    from wake.runtime.canary import parse_canary_weight  # local — avoid cycle
+
+    if parse_canary_weight(agent) > 0.0:
+        metadata.setdefault("canary", "true")
     return await machine.create(
         agent_id=agent.id,
         agent_version=agent.version,
         environment_id=body.environment_id,
-        metadata=body.metadata,
+        metadata=metadata,
         organization_id=tenant.organization_id,
         workspace_id=tenant.workspace_id,
     )
