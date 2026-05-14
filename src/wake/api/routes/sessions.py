@@ -24,8 +24,10 @@ from wake.api.dependencies import (
     get_session_store,
     get_state,
     get_tenant_context,
+    require_role,
 )
 from wake.core.session import SessionStateMachine
+from wake.rbac import Role
 from wake.store.base import AgentStore, SessionStore, StoreError
 from wake.tenancy import TenantContext
 from wake.types import Session, SessionStatus
@@ -43,7 +45,12 @@ class SessionList(BaseModel):
     data: list[Session]
 
 
-@router.post("", response_model=Session, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=Session,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_role(Role.ADMIN, Role.OPERATOR))],
+)
 async def create_session(
     body: SessionCreate,
     agent_store: AgentStore = Depends(get_agent_store),
@@ -186,7 +193,11 @@ async def get_session(
     return session
 
 
-@router.delete("/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{session_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_role(Role.ADMIN, Role.OPERATOR))],
+)
 async def delete_session(
     session_id: str,
     request: Request,
@@ -207,7 +218,11 @@ async def delete_session(
         raise HTTPException(status_code=404, detail="session not found") from e
 
 
-@router.post("/{session_id}/interrupt", response_model=Session)
+@router.post(
+    "/{session_id}/interrupt",
+    response_model=Session,
+    dependencies=[Depends(require_role(Role.ADMIN, Role.OPERATOR))],
+)
 async def interrupt_session(
     session_id: str,
     background: BackgroundTasks,
@@ -223,7 +238,11 @@ async def interrupt_session(
         raise HTTPException(status_code=409, detail=str(e)) from e
 
 
-@router.post("/{session_id}/archive", response_model=Session)
+@router.post(
+    "/{session_id}/archive",
+    response_model=Session,
+    dependencies=[Depends(require_role(Role.ADMIN, Role.OPERATOR))],
+)
 async def archive_session(
     session_id: str,
     machine: SessionStateMachine = Depends(get_session_machine),

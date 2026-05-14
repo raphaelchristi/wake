@@ -11,6 +11,7 @@ from wake.store.base import (
     EventStore,
     SessionStore,
     StoreError,
+    UserStore,
 )
 from wake.store.sqlite import (
     SQLiteAgentStore,
@@ -18,6 +19,7 @@ from wake.store.sqlite import (
     SQLiteEventStore,
     SQLiteSessionStore,
     SQLiteStore,
+    SQLiteUserStore,
 )
 
 __all__ = [
@@ -26,6 +28,7 @@ __all__ = [
     "AgentStore",
     "EnvironmentStore",
     "SessionStore",
+    "UserStore",
     "StoreError",
     # SQLite default implementations
     "SQLiteStore",
@@ -33,4 +36,5 @@ __all__ = [
     "SQLiteEnvironmentStore",
     "SQLiteEventStore",
     "SQLiteSessionStore",
+    "SQLiteUserStore",
 ]

@@ -16,7 +16,15 @@ from typing import Any
 
 from ulid import ULID
 
-from wake.store.base import AgentStore, EnvironmentStore, EventStore, SessionStore
+from wake.rbac import Role, User
+from wake.store.base import (
+    AgentStore,
+    EnvironmentStore,
+    EventStore,
+    SessionStore,
+    StoreError,
+    UserStore,
+)
 from wake.tenancy import DEFAULT_ORGANIZATION_ID, DEFAULT_WORKSPACE_ID
 from wake.types import (
     AgentConfig,
@@ -375,3 +383,138 @@ class InMemorySessionStore(SessionStore):
         if sess is None or (workspace_id is not None and sess.workspace_id != workspace_id):
             raise KeyError(id)
         del self._sessions[id]
+
+
+# ---------------------------------------------------------------------------
+# UserStore fake — used by tests/unit/test_api_users.py +
+# tests/unit/test_api_rbac_enforcement.py. Mirrors the SQLiteUserStore
+# behaviour (idempotent assigns, reserved-id rejection, etc.) without
+# the DB roundtrip.
+# ---------------------------------------------------------------------------
+
+
+class InMemoryUserStore(UserStore):
+    def __init__(self) -> None:
+        # Keyed by (workspace_id, user_id) so the same user_id can
+        # live in two workspaces independently.
+        self._users: dict[tuple[str, str], User] = {}
+        # Same key plus role.
+        self._role_rows: dict[tuple[str, str, Role], None] = {}
+
+    async def create(
+        self,
+        user_id: str,
+        *,
+        display_name: str | None = None,
+        organization_id: str = DEFAULT_ORGANIZATION_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
+    ) -> User:
+        if not user_id or not user_id.strip():
+            raise StoreError("user id cannot be empty")
+        if user_id == "system":
+            raise StoreError("user id 'system' is reserved")
+        key = (workspace_id, user_id)
+        if key in self._users:
+            raise StoreError(
+                f"user {user_id!r} already exists in workspace {workspace_id!r}"
+            )
+        user = User(
+            id=user_id,
+            display_name=display_name,
+            roles=(),
+            organization_id=organization_id,
+            workspace_id=workspace_id,
+            created_at=_now(),
+        )
+        self._users[key] = user
+        return user
+
+    async def get(self, user_id: str, *, workspace_id: str) -> User | None:
+        user = self._users.get((workspace_id, user_id))
+        if user is None:
+            return None
+        roles = self._roles_for(user_id, workspace_id)
+        return user.with_roles(roles)
+
+    async def list(self, *, workspace_id: str) -> list[User]:
+        users = [
+            u for (ws, _), u in self._users.items() if ws == workspace_id
+        ]
+        users.sort(key=lambda u: u.created_at or _now())
+        return [u.with_roles(self._roles_for(u.id, workspace_id)) for u in users]
+
+    async def update(
+        self,
+        user_id: str,
+        *,
+        workspace_id: str,
+        display_name: str | None = None,
+    ) -> User:
+        key = (workspace_id, user_id)
+        user = self._users.get(key)
+        if user is None:
+            raise StoreError(
+                f"user {user_id!r} not found in workspace {workspace_id!r}"
+            )
+        if display_name is not None:
+            user = User(
+                id=user.id,
+                display_name=display_name,
+                roles=user.roles,
+                organization_id=user.organization_id,
+                workspace_id=user.workspace_id,
+                created_at=user.created_at,
+            )
+            self._users[key] = user
+        roles = self._roles_for(user_id, workspace_id)
+        return user.with_roles(roles)
+
+    async def delete(self, user_id: str, *, workspace_id: str) -> None:
+        key = (workspace_id, user_id)
+        if key not in self._users:
+            raise StoreError(
+                f"user {user_id!r} not found in workspace {workspace_id!r}"
+            )
+        del self._users[key]
+        for k in list(self._role_rows):
+            if k[0] == workspace_id and k[1] == user_id:
+                del self._role_rows[k]
+
+    async def assign_role(
+        self,
+        user_id: str,
+        role: Role,
+        *,
+        workspace_id: str,
+    ) -> None:
+        if (workspace_id, user_id) not in self._users:
+            raise StoreError(
+                f"user {user_id!r} not found in workspace {workspace_id!r}"
+            )
+        self._role_rows[(workspace_id, user_id, role)] = None
+
+    async def revoke_role(
+        self,
+        user_id: str,
+        role: Role,
+        *,
+        workspace_id: str,
+    ) -> None:
+        self._role_rows.pop((workspace_id, user_id, role), None)
+
+    async def roles_for(
+        self,
+        user_id: str,
+        *,
+        workspace_id: str,
+    ) -> list[Role]:
+        return self._roles_for(user_id, workspace_id)
+
+    def _roles_for(self, user_id: str, workspace_id: str) -> list[Role]:
+        order = {r: i for i, r in enumerate(Role)}
+        roles = [
+            role
+            for (ws, uid, role) in self._role_rows
+            if ws == workspace_id and uid == user_id
+        ]
+        return sorted(set(roles), key=lambda r: order[r])

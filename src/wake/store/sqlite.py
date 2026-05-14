@@ -52,12 +52,14 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.pool import StaticPool
 from ulid import ULID
 
+from wake.rbac import Role, User
 from wake.store.base import (
     AgentStore,
     EnvironmentStore,
     EventStore,
     SessionStore,
     StoreError,
+    UserStore,
 )
 from wake.tenancy import DEFAULT_ORGANIZATION_ID, DEFAULT_WORKSPACE_ID
 from wake.types import (
@@ -154,6 +156,35 @@ class SessionRow(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 
+class UserRow(Base):
+    __tablename__ = "users"
+
+    # Composite primary key on (workspace_id, id) so the same user_id
+    # can live in two workspaces as two independent principals.
+    workspace_id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=DEFAULT_WORKSPACE_ID
+    )
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    organization_id: Mapped[str] = mapped_column(
+        String, nullable=False, default=DEFAULT_ORGANIZATION_ID
+    )
+    display_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class UserRoleRow(Base):
+    __tablename__ = "user_roles"
+
+    # Composite primary key — one row per (workspace, user, role).
+    workspace_id: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[str] = mapped_column(String, primary_key=True)
+    role: Mapped[str] = mapped_column(String, primary_key=True)
+    organization_id: Mapped[str] = mapped_column(
+        String, nullable=False, default=DEFAULT_ORGANIZATION_ID
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
 class EventRow(Base):
     __tablename__ = "events"
 
@@ -232,6 +263,7 @@ class SQLiteStore:
         self.agents: SQLiteAgentStore = SQLiteAgentStore(self._sessionmaker)
         self.environments: SQLiteEnvironmentStore = SQLiteEnvironmentStore(self._sessionmaker)
         self.sessions: SQLiteSessionStore = SQLiteSessionStore(self._sessionmaker)
+        self.users: SQLiteUserStore = SQLiteUserStore(self._sessionmaker)
 
     async def initialize(self) -> None:
         """Create tables if they don't exist."""
@@ -970,3 +1002,264 @@ def _row_to_session(row: SessionRow) -> Session:
         created_at=_aware(row.created_at),
         updated_at=_aware(row.updated_at),
     )
+
+
+# ---------------------------------------------------------------------------
+# UserStore implementation
+# ---------------------------------------------------------------------------
+
+
+# ``SYSTEM_USER_ID`` is reserved: the in-memory sentinel produced by
+# ``User.system()``. Persisting it would shadow the disabled-RBAC
+# fallback identity and lead to confusing audit trails.
+SYSTEM_USER_ID = "system"
+
+
+class SQLiteUserStore(UserStore):
+    """SQLite-backed user + workspace-role catalog."""
+
+    def __init__(self, sessionmaker: async_sessionmaker[AsyncSession]) -> None:
+        self._sessionmaker = sessionmaker
+
+    async def create(
+        self,
+        user_id: str,
+        *,
+        display_name: str | None = None,
+        organization_id: str = DEFAULT_ORGANIZATION_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
+    ) -> User:
+        if not user_id or not user_id.strip():
+            raise StoreError("user id cannot be empty")
+        if user_id == SYSTEM_USER_ID:
+            raise StoreError(f"user id {SYSTEM_USER_ID!r} is reserved")
+        now = _utcnow()
+        async with self._sessionmaker() as s, s.begin():
+            existing = await s.get(UserRow, (workspace_id, user_id))
+            if existing is not None:
+                raise StoreError(
+                    f"user {user_id!r} already exists in workspace {workspace_id!r}"
+                )
+            s.add(
+                UserRow(
+                    workspace_id=workspace_id,
+                    id=user_id,
+                    organization_id=organization_id,
+                    display_name=display_name,
+                    created_at=now,
+                )
+            )
+        log.info(
+            "user.created",
+            user_id=user_id,
+            workspace_id=workspace_id,
+        )
+        return User(
+            id=user_id,
+            display_name=display_name,
+            roles=(),
+            organization_id=organization_id,
+            workspace_id=workspace_id,
+            created_at=_aware(now),
+        )
+
+    async def get(
+        self,
+        user_id: str,
+        *,
+        workspace_id: str,
+    ) -> User | None:
+        async with self._sessionmaker() as s:
+            row = await s.get(UserRow, (workspace_id, user_id))
+            if row is None:
+                return None
+            role_rows = (
+                (
+                    await s.execute(
+                        select(UserRoleRow)
+                        .where(UserRoleRow.workspace_id == workspace_id)
+                        .where(UserRoleRow.user_id == user_id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        return _row_to_user(row, list(role_rows))
+
+    async def list(
+        self,
+        *,
+        workspace_id: str,
+    ) -> builtins.list[User]:
+        async with self._sessionmaker() as s:
+            user_rows = (
+                (
+                    await s.execute(
+                        select(UserRow)
+                        .where(UserRow.workspace_id == workspace_id)
+                        .order_by(UserRow.created_at)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            # Fetch every role row for the workspace in one shot then
+            # bucket per user_id — avoids an N+1 query per user.
+            role_rows = (
+                (
+                    await s.execute(
+                        select(UserRoleRow).where(
+                            UserRoleRow.workspace_id == workspace_id
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        roles_by_user: dict[str, list[UserRoleRow]] = {}
+        for rr in role_rows:
+            roles_by_user.setdefault(rr.user_id, []).append(rr)
+        return [
+            _row_to_user(row, roles_by_user.get(row.id, []))
+            for row in user_rows
+        ]
+
+    async def update(
+        self,
+        user_id: str,
+        *,
+        workspace_id: str,
+        display_name: str | None = None,
+    ) -> User:
+        async with self._sessionmaker() as s, s.begin():
+            row = await s.get(UserRow, (workspace_id, user_id))
+            if row is None:
+                raise StoreError(
+                    f"user {user_id!r} not found in workspace {workspace_id!r}"
+                )
+            if display_name is not None:
+                row.display_name = display_name
+            role_rows = (
+                (
+                    await s.execute(
+                        select(UserRoleRow)
+                        .where(UserRoleRow.workspace_id == workspace_id)
+                        .where(UserRoleRow.user_id == user_id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        return _row_to_user(row, list(role_rows))
+
+    async def delete(
+        self,
+        user_id: str,
+        *,
+        workspace_id: str,
+    ) -> None:
+        async with self._sessionmaker() as s, s.begin():
+            row = await s.get(UserRow, (workspace_id, user_id))
+            if row is None:
+                raise StoreError(
+                    f"user {user_id!r} not found in workspace {workspace_id!r}"
+                )
+            # Cascade roles by hand — keeping the schema portable
+            # (SQLite + Postgres) without relying on ON DELETE CASCADE.
+            role_rows = (
+                (
+                    await s.execute(
+                        select(UserRoleRow)
+                        .where(UserRoleRow.workspace_id == workspace_id)
+                        .where(UserRoleRow.user_id == user_id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            for rr in role_rows:
+                await s.delete(rr)
+            await s.delete(row)
+
+    async def assign_role(
+        self,
+        user_id: str,
+        role: Role,
+        *,
+        workspace_id: str,
+    ) -> None:
+        async with self._sessionmaker() as s, s.begin():
+            user = await s.get(UserRow, (workspace_id, user_id))
+            if user is None:
+                raise StoreError(
+                    f"user {user_id!r} not found in workspace {workspace_id!r}"
+                )
+            existing = await s.get(
+                UserRoleRow, (workspace_id, user_id, role.value)
+            )
+            if existing is not None:
+                return  # idempotent
+            s.add(
+                UserRoleRow(
+                    workspace_id=workspace_id,
+                    user_id=user_id,
+                    role=role.value,
+                    organization_id=user.organization_id,
+                    created_at=_utcnow(),
+                )
+            )
+
+    async def revoke_role(
+        self,
+        user_id: str,
+        role: Role,
+        *,
+        workspace_id: str,
+    ) -> None:
+        async with self._sessionmaker() as s, s.begin():
+            row = await s.get(UserRoleRow, (workspace_id, user_id, role.value))
+            if row is None:
+                return  # idempotent
+            await s.delete(row)
+
+    async def roles_for(
+        self,
+        user_id: str,
+        *,
+        workspace_id: str,
+    ) -> builtins.list[Role]:
+        async with self._sessionmaker() as s:
+            rows = (
+                (
+                    await s.execute(
+                        select(UserRoleRow)
+                        .where(UserRoleRow.workspace_id == workspace_id)
+                        .where(UserRoleRow.user_id == user_id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        return _sorted_roles([Role.parse(r.role) for r in rows])
+
+
+def _row_to_user(row: UserRow, role_rows: list[UserRoleRow]) -> User:
+    roles = _sorted_roles(
+        [Role.parse(r.role) for r in role_rows if r.user_id == row.id]
+    )
+    return User(
+        id=row.id,
+        display_name=row.display_name,
+        roles=tuple(roles),
+        organization_id=row.organization_id,
+        workspace_id=row.workspace_id,
+        created_at=_aware(row.created_at),
+    )
+
+
+def _sorted_roles(roles: builtins.list[Role]) -> builtins.list[Role]:
+    """Stable role ordering: matches Enum declaration order."""
+    order = {r: i for i, r in enumerate(Role)}
+    # De-dup defensively (idempotent assign protects but defensive
+    # ordering keeps tests deterministic even with bad data).
+    return sorted(set(roles), key=lambda r: order[r])

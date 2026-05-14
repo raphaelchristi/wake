@@ -30,6 +30,7 @@ from wake_store_postgres.agents import PostgresAgentStore
 from wake_store_postgres.environments import PostgresEnvironmentStore
 from wake_store_postgres.events import PostgresEventStore
 from wake_store_postgres.sessions import PostgresSessionStore
+from wake_store_postgres.users import PostgresUserStore
 
 log = structlog.get_logger(__name__)
 
@@ -76,6 +77,7 @@ class PostgresStore:
         self.agents: PostgresAgentStore = PostgresAgentStore(self._sessionmaker)
         self.environments: PostgresEnvironmentStore = PostgresEnvironmentStore(self._sessionmaker)
         self.sessions: PostgresSessionStore = PostgresSessionStore(self._sessionmaker)
+        self.users: PostgresUserStore = PostgresUserStore(self._sessionmaker)
 
     async def initialize(self) -> None:
         """Run Alembic to head.

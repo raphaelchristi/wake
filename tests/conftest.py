@@ -28,6 +28,7 @@ async def app_components() -> dict[str, Any]:
         InMemoryEnvironmentStore,
         InMemoryEventStore,
         InMemorySessionStore,
+        InMemoryUserStore,
     )
     from wake.adapters.registry import AdapterRegistry
     from wake.core.event_log import EventLog
@@ -39,6 +40,7 @@ async def app_components() -> dict[str, Any]:
     session_store = InMemorySessionStore()
     agent_store = InMemoryAgentStore()
     environment_store = InMemoryEnvironmentStore()
+    user_store = InMemoryUserStore()
     event_log = EventLog(event_store)
     session_machine = SessionStateMachine(session_store, event_log)
     tool_registry = ToolRegistry()
@@ -49,6 +51,7 @@ async def app_components() -> dict[str, Any]:
         "agent_store": agent_store,
         "environment_store": environment_store,
         "session_store": session_store,
+        "user_store": user_store,
         "event_store": event_store,
         "event_log": event_log,
         "session_machine": session_machine,
@@ -66,6 +69,7 @@ async def app(app_components: dict[str, Any]) -> FastAPI:
         agent_store=app_components["agent_store"],
         environment_store=app_components["environment_store"],
         session_store=app_components["session_store"],
+        user_store=app_components["user_store"],
         event_log=app_components["event_log"],
         session_machine=app_components["session_machine"],
         tool_registry=app_components["tool_registry"],
