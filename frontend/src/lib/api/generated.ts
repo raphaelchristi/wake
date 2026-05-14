@@ -38,6 +38,10 @@ export interface Session {
   container_id: string | null;
   workspace_path: string | null;
   metadata: Record<string, string>;
+  /** Tenancy: organização dona da sessão (default: `default`). */
+  organization_id: string;
+  /** Tenancy: workspace dentro da organização (default: `default`). */
+  workspace_id: string;
   created_at: string;
   updated_at: string;
 }
@@ -60,6 +64,10 @@ export interface AgentConfig {
   description?: string | null;
   metadata: Record<string, string>;
   version: number;
+  /** Tenancy: organização dona da config (default: `default`). */
+  organization_id: string;
+  /** Tenancy: workspace dentro da organização (default: `default`). */
+  workspace_id: string;
   created_at: string;
   updated_at: string;
   archived_at: string | null;
@@ -77,6 +85,10 @@ export interface Event {
   payload: Record<string, unknown>;
   parent_id: string | null;
   metadata: Record<string, unknown> | null;
+  /** Tenancy: organização à qual o evento pertence. */
+  organization_id: string;
+  /** Tenancy: workspace ao qual o evento pertence. */
+  workspace_id: string;
   created_at: string;
 }
 

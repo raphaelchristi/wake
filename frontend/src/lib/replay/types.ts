@@ -29,6 +29,13 @@ export interface WakeEvent {
   payload: Record<string, unknown>;
   parent_id?: string | null;
   metadata?: Record<string, unknown> | null;
+  /**
+   * Tenancy: campos opcionais para back-compat com fixtures antigos.
+   * Backend (>= 89bec12) sempre emite, mas tornamos opcional para que o
+   * replay continue lendo logs históricos sem os campos.
+   */
+  organization_id?: string;
+  workspace_id?: string;
   created_at: string;
 }
 

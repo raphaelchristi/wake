@@ -39,6 +39,38 @@ function resolveBackendBase(): string {
 
 export const runtime = "nodejs";
 
+/**
+ * Regex defensiva para tenant ids — bate com o backend
+ * (`src/wake/tenancy.py`). Rejeita strings vazias, espaços, CRLF.
+ */
+const TENANT_RE = /^[a-z0-9][a-z0-9_-]{0,62}$/;
+const DEFAULT_TENANT = "default";
+
+function resolveTenantFromRequest(req: NextRequest): {
+  organizationId: string;
+  workspaceId: string;
+  error?: string;
+} {
+  // Permite client passar via header (preferido — espelha o que o API
+  // client browser-side já faz) ou via query string (fallback).
+  const orgHeader = req.headers.get("x-wake-organization-id");
+  const wsHeader = req.headers.get("x-wake-workspace-id");
+  const url = new URL(req.url);
+  const orgQuery = url.searchParams.get("org");
+  const wsQuery = url.searchParams.get("ws");
+
+  const org = (orgHeader ?? orgQuery ?? DEFAULT_TENANT).trim();
+  const ws = (wsHeader ?? wsQuery ?? DEFAULT_TENANT).trim();
+
+  if (!TENANT_RE.test(org)) {
+    return { organizationId: DEFAULT_TENANT, workspaceId: DEFAULT_TENANT, error: "invalid org" };
+  }
+  if (!TENANT_RE.test(ws)) {
+    return { organizationId: DEFAULT_TENANT, workspaceId: DEFAULT_TENANT, error: "invalid ws" };
+  }
+  return { organizationId: org, workspaceId: ws };
+}
+
 export async function POST(req: NextRequest) {
   let body: { code?: string; state?: string };
   try {
@@ -56,6 +88,11 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  const tenant = resolveTenantFromRequest(req);
+  if (tenant.error) {
+    return NextResponse.json({ error: tenant.error }, { status: 400 });
+  }
+
   let url: URL;
   try {
     url = new URL("/v1/vault/oauth/callback", resolveBackendBase());
@@ -71,7 +108,13 @@ export async function POST(req: NextRequest) {
   url.searchParams.set("code", body.code);
   url.searchParams.set("state", body.state);
 
-  const headers: Record<string, string> = { Accept: "application/json" };
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    // Encaminha tenancy para que a credencial seja gravada no workspace
+    // correto pelo vault (sem isso o backend cairia em `default/default`).
+    "X-Wake-Organization-Id": tenant.organizationId,
+    "X-Wake-Workspace-Id": tenant.workspaceId,
+  };
   // Allow opt-in server-side auth: operators can set WAKE_API_KEY on the
   // Next.js process so the callback proxy authenticates without leaking
   // the key into the browser.
@@ -83,6 +126,10 @@ export async function POST(req: NextRequest) {
   // localStorage so this is a no-op; harmless on the empty path.
   const incomingAuth = req.headers.get("x-wake-api-key");
   if (incomingAuth) headers["X-Wake-API-Key"] = incomingAuth;
+
+  // Forward optional user id (slice A — RBAC). No-op quando ausente.
+  const userId = req.headers.get("x-wake-user-id");
+  if (userId) headers["X-Wake-User-Id"] = userId;
 
   const started = Date.now();
   // Never log raw `code` or `state` — they are short-lived credentials.

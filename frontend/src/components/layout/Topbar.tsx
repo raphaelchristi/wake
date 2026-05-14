@@ -5,7 +5,9 @@ import { useEffect, useState } from "react";
 import { LogOut, Moon, Sun } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { WorkspaceSelector } from "@/components/workspace/WorkspaceSelector";
 import { clearApiKey } from "@/lib/auth";
+import { clearTenantScope } from "@/lib/tenant";
 
 const THEME_KEY = "wake.theme";
 
@@ -48,6 +50,7 @@ export function Topbar({ title }: { title?: string }) {
 
   function logout() {
     clearApiKey();
+    clearTenantScope();
     router.replace("/login");
   }
 
@@ -55,6 +58,7 @@ export function Topbar({ title }: { title?: string }) {
     <header className="flex h-14 items-center justify-between border-b border-border bg-background px-4">
       <div className="text-sm font-medium text-foreground">{title ?? "Wake"}</div>
       <div className="flex items-center gap-2">
+        <WorkspaceSelector />
         <Button
           variant="ghost"
           size="icon"

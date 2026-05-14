@@ -11,6 +11,8 @@ const SAMPLE_SESSIONS = {
       container_id: null,
       workspace_path: null,
       metadata: { model: "claude-opus-4-7" },
+      organization_id: "default",
+      workspace_id: "default",
       created_at: new Date(Date.now() - 5 * 60_000).toISOString(),
       updated_at: new Date(Date.now() - 60_000).toISOString(),
     },
@@ -41,6 +43,10 @@ test.describe("Sessions list", () => {
     await expect(page).toHaveURL(/\/sessions/);
     await expect(page.getByRole("heading", { name: "Sessions" })).toBeVisible();
     await expect(page.getByText("claude-opus-4-7")).toBeVisible();
-    await expect(page.getByText("Running")).toBeVisible();
+    // Status badge (aria-label) — distingue do <option> no filtro Status.
+    await expect(page.getByLabel("Status: Running")).toBeVisible();
+    // Tenancy: workspace selector visível na topbar com scope default.
+    await expect(page.getByTestId("workspace-selector-trigger")).toBeVisible();
+    await expect(page.getByTestId("workspace-selector-trigger")).toContainText("default");
   });
 });
