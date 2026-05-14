@@ -201,6 +201,12 @@ class EventRow(Base):
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     parent_id: Mapped[str | None] = mapped_column(String(26), nullable=True, index=True)
     meta: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    # Phase 7 idempotency (Tier 1 gap #4): nullable column with a
+    # UNIQUE partial index ``(workspace_id, session_id, idempotency_key)
+    # WHERE idempotency_key IS NOT NULL`` installed in initialize().
+    # NULL never collides — backward-compat with callers that do not
+    # opt into dedupe.
+    idempotency_key: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 
@@ -272,6 +278,20 @@ class SQLiteStore:
             # Recommended pragmas for SQLite durability + concurrency.
             await conn.execute(text("PRAGMA journal_mode=WAL"))
             await conn.execute(text("PRAGMA foreign_keys=ON"))
+            # Phase 7 idempotency (Tier 1 gap #4): UNIQUE partial
+            # index on (workspace_id, session_id, idempotency_key).
+            # SQLite 3.8+ supports partial indexes; Wake's minimum
+            # SQLite (3.35+, for RETURNING) is comfortably ahead.
+            await conn.execute(
+                text(
+                    """
+                    CREATE UNIQUE INDEX IF NOT EXISTS
+                        uq_events_idempotency
+                        ON events (workspace_id, session_id, idempotency_key)
+                        WHERE idempotency_key IS NOT NULL
+                    """
+                )
+            )
 
     async def close(self) -> None:
         await self.engine.dispose()
@@ -322,10 +342,41 @@ class SQLiteEventStore(EventStore):
         metadata: dict[str, Any] | None = None,
         organization_id: str = DEFAULT_ORGANIZATION_ID,
         workspace_id: str = DEFAULT_WORKSPACE_ID,
+        *,
+        idempotency_key: str | None = None,
     ) -> Event:
         now = _utcnow()
         event_id = _new_ulid()
+        # Phase 7: mirror the dedupe key into metadata so the
+        # persisted event carries the signal in plain sight. Stores
+        # consumed via the bare EventStore API (not the EventLog
+        # facade) get the same observability surface for free.
+        meta_to_store = metadata
+        if idempotency_key is not None:
+            meta_to_store = dict(metadata or {})
+            meta_to_store.setdefault("idempotency_key", idempotency_key)
         async with self._append_lock(session_id):
+            # Phase 7 idempotency (Tier 1 gap #4): when the caller
+            # supplies a key, check first for an existing row carrying
+            # the same ``(workspace_id, session_id, idempotency_key)``
+            # tuple. If found we return that event unchanged — the
+            # UNIQUE partial index would reject the insert anyway, but
+            # checking first lets us return the dedupe target without
+            # surfacing IntegrityError to callers.
+            if idempotency_key is not None:
+                existing = await self._find_by_idempotency_key(
+                    workspace_id=workspace_id,
+                    session_id=session_id,
+                    idempotency_key=idempotency_key,
+                )
+                if existing is not None:
+                    log.debug(
+                        "event.append.idempotent_dedupe",
+                        session_id=session_id,
+                        idempotency_key=idempotency_key,
+                        existing_id=existing.id,
+                    )
+                    return existing
             async with self._sessionmaker() as s, s.begin():
                 # Allocate next seq.
                 current_max = await s.scalar(
@@ -341,7 +392,8 @@ class SQLiteEventStore(EventStore):
                     type=event_type,
                     payload=payload,
                     parent_id=parent_id,
-                    meta=metadata,
+                    meta=meta_to_store,
+                    idempotency_key=idempotency_key,
                     created_at=now,
                 )
                 s.add(row)
@@ -368,9 +420,32 @@ class SQLiteEventStore(EventStore):
             type=event_type,
             payload=payload,
             parent_id=parent_id,
-            metadata=metadata,
+            metadata=meta_to_store,
             created_at=_aware(now),
         )
+
+    async def _find_by_idempotency_key(
+        self,
+        *,
+        workspace_id: str,
+        session_id: str,
+        idempotency_key: str,
+    ) -> Event | None:
+        """Return the event carrying ``idempotency_key`` for the scope.
+
+        Returns ``None`` when no prior event carries the key. Used by
+        ``append`` to short-circuit duplicate writes.
+        """
+        async with self._sessionmaker() as s:
+            stmt = (
+                select(EventRow)
+                .where(EventRow.workspace_id == workspace_id)
+                .where(EventRow.session_id == session_id)
+                .where(EventRow.idempotency_key == idempotency_key)
+                .limit(1)
+            )
+            row = (await s.execute(stmt)).scalar_one_or_none()
+        return _row_to_event(row) if row is not None else None
 
     async def get(
         self,

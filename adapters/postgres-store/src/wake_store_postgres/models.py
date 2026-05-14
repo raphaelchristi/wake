@@ -144,6 +144,10 @@ class EventRow(Base):
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     parent_id: Mapped[str | None] = mapped_column(String(26), nullable=True)
     meta: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    # Phase 7 idempotency (Tier 1 gap #4): nullable; the partial
+    # UNIQUE index lives in migration 0004 — declared here so the
+    # ORM round-trips the column on insert/select.
+    idempotency_key: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 

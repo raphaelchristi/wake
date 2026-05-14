@@ -65,12 +65,31 @@ class EventStore(ABC):
         metadata: dict[str, Any] | None = None,
         organization_id: str = DEFAULT_ORGANIZATION_ID,
         workspace_id: str = DEFAULT_WORKSPACE_ID,
+        *,
+        idempotency_key: str | None = None,
     ) -> Event:
         """Append an event to ``session_id``'s log.
 
         Returns the persisted event (with assigned ``id``, ``seq``,
         ``created_at``). Must be atomic with respect to ``seq`` allocation
         on the same session.
+
+        Phase 7 idempotency contract (Tier 1 gap #4):
+
+        * ``idempotency_key`` is an optional ``str`` opaque to the
+          store. When present the store records it on the event's
+          ``metadata`` payload under the ``idempotency_key`` key and
+          enforces a UNIQUE constraint on
+          ``(workspace_id, session_id, idempotency_key)`` via a
+          partial index (NULL keys never collide).
+        * A second ``append`` with the **same** ``idempotency_key``
+          for the same ``(workspace_id, session_id)`` MUST return
+          the previously-persisted event — no new row, no new
+          ``seq``. The duplicate request is silently absorbed; this
+          is how worker double-process events (Codex Phase 5.2
+          finding) are deduplicated.
+        * ``idempotency_key=None`` preserves the historical
+          behaviour — every call creates a new row.
         """
 
     @abstractmethod

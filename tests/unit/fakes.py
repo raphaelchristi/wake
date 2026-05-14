@@ -47,6 +47,8 @@ class InMemoryEventStore(EventStore):
     def __init__(self) -> None:
         self._events: dict[str, list[Event]] = {}
         self._subscribers: dict[str, list[asyncio.Queue[Event]]] = {}
+        # Phase 7 idempotency cache: (workspace_id, session_id, key) → Event
+        self._idempotency: dict[tuple[str, str, str], Event] = {}
 
     async def append(
         self,
@@ -57,9 +59,21 @@ class InMemoryEventStore(EventStore):
         metadata: dict[str, Any] | None = None,
         organization_id: str = DEFAULT_ORGANIZATION_ID,
         workspace_id: str = DEFAULT_WORKSPACE_ID,
+        *,
+        idempotency_key: str | None = None,
     ) -> Event:
+        if idempotency_key is not None:
+            cached = self._idempotency.get((workspace_id, session_id, idempotency_key))
+            if cached is not None:
+                return cached
         events = self._events.setdefault(session_id, [])
         seq = len(events)
+        # Mirror the key into metadata so the persisted event carries
+        # the dedupe signal in the same place the SQL stores do.
+        meta = metadata
+        if idempotency_key is not None:
+            meta = dict(metadata or {})
+            meta.setdefault("idempotency_key", idempotency_key)
         ev = Event(
             id=str(ULID()),
             organization_id=organization_id,
@@ -69,10 +83,12 @@ class InMemoryEventStore(EventStore):
             type=event_type,
             payload=payload,
             parent_id=parent_id,
-            metadata=metadata,
+            metadata=meta,
             created_at=_now(),
         )
         events.append(ev)
+        if idempotency_key is not None:
+            self._idempotency[(workspace_id, session_id, idempotency_key)] = ev
         for q in self._subscribers.get(session_id, []):
             await q.put(ev)
         return ev
