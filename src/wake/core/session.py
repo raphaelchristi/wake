@@ -34,6 +34,7 @@ from statemachine.exceptions import TransitionNotAllowed
 
 from wake.core.event_log import EventLog
 from wake.store.base import SessionStore
+from wake.tenancy import DEFAULT_ORGANIZATION_ID, DEFAULT_WORKSPACE_ID
 from wake.types import Session, SessionStatus
 
 log = structlog.get_logger(__name__)
@@ -66,20 +67,14 @@ class _SessionFSM(StateMachine):
     complete = running.to(idle)
     reschedule = running.to(rescheduling)
     resume = rescheduling.to(running)
-    terminate = (
-        idle.to(terminated)
-        | running.to(terminated)
-        | rescheduling.to(terminated)
-    )
+    terminate = idle.to(terminated) | running.to(terminated) | rescheduling.to(terminated)
 
 
 def _validate(current: SessionStatus, target: SessionStatus) -> None:
     """Raise InvalidTransitionError if ``current → target`` isn't allowed."""
     allowed = VALID_TRANSITIONS.get(current, set())
     if target not in allowed:
-        raise InvalidTransitionError(
-            f"invalid transition {current!r} → {target!r}"
-        )
+        raise InvalidTransitionError(f"invalid transition {current!r} → {target!r}")
 
 
 # Service ------------------------------------------------------------------
@@ -100,17 +95,21 @@ class SessionService:
         agent_version: int,
         environment_id: str | None = None,
         metadata: dict[str, str] | None = None,
+        organization_id: str = DEFAULT_ORGANIZATION_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> Session:
         session = await self._store.create(
             agent_id=agent_id,
             agent_version=agent_version,
             environment_id=environment_id,
             metadata=metadata,
+            organization_id=organization_id,
+            workspace_id=workspace_id,
         )
         log.info("session.created", session_id=session.id, agent_id=agent_id)
         return session
 
-    async def get(self, session_id: str) -> Session | None:
+    async def get(self, session_id: str, *, workspace_id: str | None = None) -> Session | None:
         """Return the session by id, or None if not found.
 
         Convention follows SessionStore.get — callers that require existence
@@ -118,44 +117,71 @@ class SessionService:
         terminate, etc.) raise InvalidTransitionError if asked to operate on
         a missing session.
         """
-        return await self._store.get(session_id)
+        return await self._store.get(session_id, workspace_id=workspace_id)
 
-    async def require(self, session_id: str) -> Session:
+    async def require(self, session_id: str, *, workspace_id: str | None = None) -> Session:
         """Fetch the session by id or raise InvalidTransitionError if missing."""
-        s = await self._store.get(session_id)
+        s = await self._store.get(session_id, workspace_id=workspace_id)
         if s is None:
             raise InvalidTransitionError(f"session {session_id!r} not found")
         return s
 
     async def list(
-        self, *, status: SessionStatus | None = None
+        self,
+        *,
+        status: SessionStatus | None = None,
+        workspace_id: str | None = None,
     ) -> builtins.list[Session]:
-        return await self._store.list(status=status)
+        return await self._store.list(status=status, workspace_id=workspace_id)
 
-    async def delete(self, session_id: str) -> None:
-        await self._store.delete(session_id)
+    async def delete(self, session_id: str, *, workspace_id: str | None = None) -> None:
+        await self._store.delete(session_id, workspace_id=workspace_id)
 
     # ---- transitions ----
 
-    async def start(self, session_id: str) -> Session:
+    async def start(self, session_id: str, *, workspace_id: str | None = None) -> Session:
         """idle → running. Idempotent if already running."""
         return await self._transition(
-            session_id, "running", reason="start", idempotent=True
+            session_id,
+            "running",
+            reason="start",
+            idempotent=True,
+            workspace_id=workspace_id,
         )
 
-    async def complete(self, session_id: str, *, reason: str = "end_turn") -> Session:
+    async def complete(
+        self,
+        session_id: str,
+        *,
+        reason: str = "end_turn",
+        workspace_id: str | None = None,
+    ) -> Session:
         """running → idle. Emits status event."""
-        return await self._transition(session_id, "idle", reason=reason)
+        return await self._transition(session_id, "idle", reason=reason, workspace_id=workspace_id)
 
     async def reschedule(
-        self, session_id: str, *, reason: str = "transient_error"
+        self,
+        session_id: str,
+        *,
+        reason: str = "transient_error",
+        workspace_id: str | None = None,
     ) -> Session:
         """running → rescheduling."""
-        return await self._transition(session_id, "rescheduling", reason=reason)
+        return await self._transition(
+            session_id, "rescheduling", reason=reason, workspace_id=workspace_id
+        )
 
-    async def resume(self, session_id: str, *, reason: str = "retry") -> Session:
+    async def resume(
+        self,
+        session_id: str,
+        *,
+        reason: str = "retry",
+        workspace_id: str | None = None,
+    ) -> Session:
         """rescheduling → running."""
-        return await self._transition(session_id, "running", reason=reason)
+        return await self._transition(
+            session_id, "running", reason=reason, workspace_id=workspace_id
+        )
 
     async def fail(
         self,
@@ -163,15 +189,26 @@ class SessionService:
         reason: str,
         *,
         transient: bool = True,
+        workspace_id: str | None = None,
     ) -> Session:
         """Either rescheduling (transient) or terminated (permanent)."""
         target: SessionStatus = "rescheduling" if transient else "terminated"
-        return await self._transition(session_id, target, reason=reason)
+        return await self._transition(session_id, target, reason=reason, workspace_id=workspace_id)
 
-    async def terminate(self, session_id: str, *, reason: str = "terminated") -> Session:
+    async def terminate(
+        self,
+        session_id: str,
+        *,
+        reason: str = "terminated",
+        workspace_id: str | None = None,
+    ) -> Session:
         """* → terminated. Idempotent — calling on a terminated session is a no-op."""
         return await self._transition(
-            session_id, "terminated", reason=reason, idempotent=True
+            session_id,
+            "terminated",
+            reason=reason,
+            idempotent=True,
+            workspace_id=workspace_id,
         )
 
     # ---- container metadata ----
@@ -181,9 +218,13 @@ class SessionService:
         session_id: str,
         container_id: str | None,
         workspace_path: str | None = None,
+        workspace_id: str | None = None,
     ) -> Session:
         return await self._store.set_container(
-            session_id, container_id=container_id, workspace_path=workspace_path
+            session_id,
+            container_id=container_id,
+            workspace_path=workspace_path,
+            workspace_id=workspace_id,
         )
 
     # ---- internal ----
@@ -195,17 +236,16 @@ class SessionService:
         *,
         reason: str | None,
         idempotent: bool = False,
+        workspace_id: str | None = None,
     ) -> Session:
-        current = await self.require(session_id)
+        current = await self.require(session_id, workspace_id=workspace_id)
         if current.status == target:
             if idempotent:
                 # No-op (don't emit duplicate status events).
                 return current
             # Same-state transition that the caller did NOT mark idempotent
             # — treat as an invalid transition (e.g. complete() from idle).
-            raise InvalidTransitionError(
-                f"invalid transition {current.status!r} → {target!r}"
-            )
+            raise InvalidTransitionError(f"invalid transition {current.status!r} → {target!r}")
         _validate(current.status, target)
         # Sanity-check with python-statemachine as a second guard.
         fsm = _SessionFSM(start_value=current.status)
@@ -214,9 +254,14 @@ class SessionService:
         except TransitionNotAllowed as e:
             # Should never happen if VALID_TRANSITIONS matches FSM.
             raise InvalidTransitionError(str(e)) from e
-        updated = await self._store.update_status(session_id, target)
+        updated = await self._store.update_status(session_id, target, workspace_id=workspace_id)
         await self._events.status(
-            session_id, from_=current.status, to=target, reason=reason
+            session_id,
+            from_=current.status,
+            to=target,
+            reason=reason,
+            organization_id=current.organization_id,
+            workspace_id=current.workspace_id,
         )
         log.info(
             "session.transition",
@@ -226,9 +271,7 @@ class SessionService:
         return updated
 
     @staticmethod
-    def _dispatch_fsm(
-        fsm: _SessionFSM, current: SessionStatus, target: SessionStatus
-    ) -> None:
+    def _dispatch_fsm(fsm: _SessionFSM, current: SessionStatus, target: SessionStatus) -> None:
         # Map (current,target) to the corresponding event name.
         event = _FSM_EVENTS[(current, target)]
         method: Any = getattr(fsm, event)

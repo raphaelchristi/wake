@@ -21,6 +21,7 @@ from typing import Any
 import structlog
 
 from wake.store.base import EventStore
+from wake.tenancy import DEFAULT_ORGANIZATION_ID, DEFAULT_WORKSPACE_ID
 from wake.types import (
     Event,
     EventType,
@@ -48,6 +49,8 @@ class EventLog:
         *,
         parent_id: str | None = None,
         metadata: dict[str, Any] | None = None,
+        organization_id: str = DEFAULT_ORGANIZATION_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> Event:
         return await self._store.append(
             session_id=session_id,
@@ -55,23 +58,31 @@ class EventLog:
             payload=payload,
             parent_id=parent_id,
             metadata=metadata,
+            organization_id=organization_id,
+            workspace_id=workspace_id,
         )
 
-    async def get(self, session_id: str, since: int = 0) -> list[Event]:
-        return await self._store.get(session_id, since=since)
+    async def get(
+        self,
+        session_id: str,
+        since: int = 0,
+        *,
+        workspace_id: str | None = None,
+    ) -> list[Event]:
+        return await self._store.get(session_id, since=since, workspace_id=workspace_id)
 
-    async def get_one(self, event_id: str) -> Event | None:
-        return await self._store.get_one(event_id)
+    async def get_one(self, event_id: str, *, workspace_id: str | None = None) -> Event | None:
+        return await self._store.get_one(event_id, workspace_id=workspace_id)
 
-    async def count(self, session_id: str) -> int:
-        return await self._store.count(session_id)
+    async def count(self, session_id: str, *, workspace_id: str | None = None) -> int:
+        return await self._store.count(session_id, workspace_id=workspace_id)
 
     async def subscribe(
-        self, session_id: str, since: int = 0
+        self, session_id: str, since: int = 0, *, workspace_id: str | None = None
     ) -> AsyncIterator[Event]:
         # EventStore.subscribe returns AsyncIterator directly (not a
         # coroutine to be awaited).
-        return await self._store.subscribe(session_id, since=since)
+        return await self._store.subscribe(session_id, since=since, workspace_id=workspace_id)
 
     # ------------------------------------------------------------------ helpers
 
@@ -81,12 +92,16 @@ class EventLog:
         text: str,
         *,
         metadata: dict[str, Any] | None = None,
+        organization_id: str = DEFAULT_ORGANIZATION_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> Event:
         return await self.append(
             session_id,
             "user.message",
             {"content": [TextBlock(text=text).model_dump()]},
             metadata=metadata,
+            organization_id=organization_id,
+            workspace_id=workspace_id,
         )
 
     async def assistant_message(
@@ -97,6 +112,8 @@ class EventLog:
         stop_reason: str = "end_turn",
         usage: dict[str, int] | None = None,
         metadata: dict[str, Any] | None = None,
+        organization_id: str = DEFAULT_ORGANIZATION_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> Event:
         payload: dict[str, Any] = {
             "content": [TextBlock(text=text).model_dump()],
@@ -105,7 +122,12 @@ class EventLog:
         if usage is not None:
             payload["usage"] = usage
         return await self.append(
-            session_id, "assistant.message", payload, metadata=metadata
+            session_id,
+            "assistant.message",
+            payload,
+            metadata=metadata,
+            organization_id=organization_id,
+            workspace_id=workspace_id,
         )
 
     async def tool_use(
@@ -116,12 +138,16 @@ class EventLog:
         input: dict[str, Any],
         *,
         metadata: dict[str, Any] | None = None,
+        organization_id: str = DEFAULT_ORGANIZATION_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> Event:
         return await self.append(
             session_id,
             "tool_use",
             {"tool_use_id": tool_use_id, "name": name, "input": input},
             metadata=metadata,
+            organization_id=organization_id,
+            workspace_id=workspace_id,
         )
 
     async def tool_result(
@@ -132,6 +158,8 @@ class EventLog:
         *,
         parent_id: str | None = None,
         metadata: dict[str, Any] | None = None,
+        organization_id: str = DEFAULT_ORGANIZATION_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> Event:
         payload: dict[str, Any] = {
             "tool_use_id": tool_use_id,
@@ -146,6 +174,8 @@ class EventLog:
             payload,
             parent_id=parent_id,
             metadata=metadata,
+            organization_id=organization_id,
+            workspace_id=workspace_id,
         )
 
     async def status(
@@ -155,11 +185,19 @@ class EventLog:
         to: SessionStatus,
         *,
         reason: str | None = None,
+        organization_id: str = DEFAULT_ORGANIZATION_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> Event:
         payload: dict[str, Any] = {"from": from_, "to": to}
         if reason is not None:
             payload["reason"] = reason
-        return await self.append(session_id, "status", payload)
+        return await self.append(
+            session_id,
+            "status",
+            payload,
+            organization_id=organization_id,
+            workspace_id=workspace_id,
+        )
 
     async def error(
         self,
@@ -168,11 +206,19 @@ class EventLog:
         message: str,
         *,
         trace: str | None = None,
+        organization_id: str = DEFAULT_ORGANIZATION_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> Event:
         payload: dict[str, Any] = {"error_type": error_type, "message": message}
         if trace is not None:
             payload["trace"] = trace
-        return await self.append(session_id, "error", payload)
+        return await self.append(
+            session_id,
+            "error",
+            payload,
+            organization_id=organization_id,
+            workspace_id=workspace_id,
+        )
 
     # ------------------------------------------------------------------ projection
 
@@ -189,9 +235,7 @@ class EventLog:
             if ev.type == "user.message":
                 messages.append({"role": "user", "content": ev.payload["content"]})
             elif ev.type == "assistant.message":
-                messages.append(
-                    {"role": "assistant", "content": ev.payload["content"]}
-                )
+                messages.append({"role": "assistant", "content": ev.payload["content"]})
             elif ev.type == "tool_use":
                 if not messages or messages[-1]["role"] != "assistant":
                     messages.append({"role": "assistant", "content": []})

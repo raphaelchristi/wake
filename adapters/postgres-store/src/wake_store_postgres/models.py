@@ -33,6 +33,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from wake.tenancy import DEFAULT_ORGANIZATION_ID, DEFAULT_WORKSPACE_ID
 
 
 class Base(DeclarativeBase):
@@ -43,6 +44,12 @@ class AgentRow(Base):
     __tablename__ = "agents"
 
     id: Mapped[str] = mapped_column(String(26), primary_key=True)
+    organization_id: Mapped[str] = mapped_column(
+        String, nullable=False, default=DEFAULT_ORGANIZATION_ID
+    )
+    workspace_id: Mapped[str] = mapped_column(
+        String, nullable=False, default=DEFAULT_WORKSPACE_ID, index=True
+    )
     name: Mapped[str] = mapped_column(String, nullable=False)
     current_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -72,6 +79,12 @@ class EnvironmentRow(Base):
     __tablename__ = "environments"
 
     id: Mapped[str] = mapped_column(String(26), primary_key=True)
+    organization_id: Mapped[str] = mapped_column(
+        String, nullable=False, default=DEFAULT_ORGANIZATION_ID
+    )
+    workspace_id: Mapped[str] = mapped_column(
+        String, nullable=False, default=DEFAULT_WORKSPACE_ID, index=True
+    )
     name: Mapped[str] = mapped_column(String, nullable=False)
     config: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -82,6 +95,12 @@ class SessionRow(Base):
     __tablename__ = "sessions"
 
     id: Mapped[str] = mapped_column(String(26), primary_key=True)
+    organization_id: Mapped[str] = mapped_column(
+        String, nullable=False, default=DEFAULT_ORGANIZATION_ID
+    )
+    workspace_id: Mapped[str] = mapped_column(
+        String, nullable=False, default=DEFAULT_WORKSPACE_ID, index=True
+    )
     agent_id: Mapped[str] = mapped_column(String(26), nullable=False)
     agent_version: Mapped[int] = mapped_column(Integer, nullable=False)
     environment_id: Mapped[str | None] = mapped_column(String(26), nullable=True)
@@ -113,6 +132,12 @@ class EventRow(Base):
     __tablename__ = "events"
 
     id: Mapped[str] = mapped_column(String(26), primary_key=True)
+    organization_id: Mapped[str] = mapped_column(
+        String, nullable=False, default=DEFAULT_ORGANIZATION_ID
+    )
+    workspace_id: Mapped[str] = mapped_column(
+        String, nullable=False, default=DEFAULT_WORKSPACE_ID, index=True
+    )
     session_id: Mapped[str] = mapped_column(String(26), primary_key=True)
     seq: Mapped[int] = mapped_column(Integer, nullable=False)
     type: Mapped[str] = mapped_column(String, nullable=False)

@@ -23,6 +23,8 @@ if TYPE_CHECKING:
     from wake.store.base import AgentStore, EnvironmentStore, SessionStore
     from wake.tools.registry import ToolRegistry
 
+from wake.tenancy import DEFAULT_ORGANIZATION_ID, DEFAULT_WORKSPACE_ID, TenantContext
+
 
 @dataclass
 class AppState:
@@ -136,6 +138,8 @@ def get_vault(request: Request) -> object:
 WAKE_API_KEY_ENV = "WAKE_API_KEY"
 WAKE_AUTH_REQUIRED_ENV = "WAKE_AUTH_REQUIRED"
 WAKE_API_KEY_HEADER = "X-Wake-API-Key"
+WAKE_ORGANIZATION_ID_HEADER = "X-Wake-Organization-Id"
+WAKE_WORKSPACE_ID_HEADER = "X-Wake-Workspace-Id"
 
 
 def _auth_required_flag() -> bool:
@@ -185,6 +189,28 @@ async def verify_api_key(
         raise HTTPException(status_code=401, detail="missing api key")
     if not _constant_time_eq(provided, expected):
         raise HTTPException(status_code=401, detail="invalid api key")
+
+
+async def get_tenant_context(
+    x_wake_organization_id: str | None = Header(default=None, alias=WAKE_ORGANIZATION_ID_HEADER),
+    x_wake_workspace_id: str | None = Header(default=None, alias=WAKE_WORKSPACE_ID_HEADER),
+) -> TenantContext:
+    """Resolve the request's tenant scope.
+
+    Deployments can inject these headers from their own auth layer. Wake keeps a
+    ``default/default`` scope for backwards-compatible local and single-tenant
+    deployments.
+    """
+    organization_id = (x_wake_organization_id or DEFAULT_ORGANIZATION_ID).strip()
+    workspace_id = (x_wake_workspace_id or DEFAULT_WORKSPACE_ID).strip()
+    if not organization_id:
+        raise HTTPException(status_code=400, detail="organization id cannot be empty")
+    if not workspace_id:
+        raise HTTPException(status_code=400, detail="workspace id cannot be empty")
+    return TenantContext(
+        organization_id=organization_id,
+        workspace_id=workspace_id,
+    )
 
 
 def _constant_time_eq(a: str, b: str) -> bool:

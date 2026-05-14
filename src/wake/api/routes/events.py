@@ -19,10 +19,12 @@ from wake.api.dependencies import (
     get_event_log,
     get_session_machine,
     get_state,
+    get_tenant_context,
 )
 from wake.core.event_log import EventLog
 from wake.core.session import SessionStateMachine
 from wake.store.base import AgentStore
+from wake.tenancy import TenantContext
 from wake.types import Event, EventType
 
 logger = structlog.get_logger(__name__)
@@ -54,8 +56,9 @@ async def append_event(
     event_log: EventLog = Depends(get_event_log),
     machine: SessionStateMachine = Depends(get_session_machine),
     agent_store: AgentStore = Depends(get_agent_store),
+    tenant: TenantContext = Depends(get_tenant_context),
 ) -> Event:
-    session = await machine.get(session_id)
+    session = await machine.get(session_id, workspace_id=tenant.workspace_id)
     if session is None:
         raise HTTPException(status_code=404, detail="session not found")
 
@@ -68,13 +71,19 @@ async def append_event(
         body.payload,
         parent_id=body.parent_id,
         metadata=body.metadata,
+        organization_id=session.organization_id,
+        workspace_id=session.workspace_id,
     )
 
     # If the user just spoke, kick the harness in the background through
     # the dispatcher. The dispatcher resolves the adapter by name (from
     # agent metadata or the runtime default) and drives the loop.
     if body.type == "user.message":
-        agent = await agent_store.get(session.agent_id, version=session.agent_version)
+        agent = await agent_store.get(
+            session.agent_id,
+            version=session.agent_version,
+            workspace_id=tenant.workspace_id,
+        )
         if agent is None:
             raise HTTPException(status_code=404, detail="agent not found")
 
@@ -92,27 +101,34 @@ async def list_events(
     session_id: str,
     since: int = 0,
     event_log: EventLog = Depends(get_event_log),
+    machine: SessionStateMachine = Depends(get_session_machine),
+    tenant: TenantContext = Depends(get_tenant_context),
 ) -> EventList:
-    events = await event_log.get(session_id, since=since)
+    session = await machine.get(session_id, workspace_id=tenant.workspace_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="session not found")
+    events = await event_log.get(
+        session_id,
+        since=since,
+        workspace_id=tenant.workspace_id,
+    )
     return EventList(data=events)
 
 
-async def _run_dispatcher_safely(
-    request: Request, session_id: str, agent_id: str
-) -> None:
+async def _run_dispatcher_safely(request: Request, session_id: str, agent_id: str) -> None:
     """Background task: drive the configured adapter for a session."""
     state = get_state(request)
-    if (
-        state.dispatcher is None
-        or state.session_machine is None
-        or state.agent_store is None
-    ):
+    if state.dispatcher is None or state.session_machine is None or state.agent_store is None:
         return
 
     sess = await state.session_machine.get(session_id)
     if sess is None:
         return
-    agent = await state.agent_store.get(agent_id, version=sess.agent_version)
+    agent = await state.agent_store.get(
+        agent_id,
+        version=sess.agent_version,
+        workspace_id=sess.workspace_id,
+    )
     if agent is None:
         return
 
@@ -137,6 +153,8 @@ async def _run_dispatcher_safely(
                 session_id,
                 "error",
                 {"error_type": "harness_panic", "message": str(e)},
+                organization_id=sess.organization_id,
+                workspace_id=sess.workspace_id,
             )
         try:
             await state.session_machine.fail(session_id, str(e), transient=False)

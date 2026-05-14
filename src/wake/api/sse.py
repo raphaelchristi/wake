@@ -20,9 +20,10 @@ import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from sse_starlette.sse import EventSourceResponse
 
-from wake.api.dependencies import get_event_log, get_session_store
+from wake.api.dependencies import get_event_log, get_session_store, get_tenant_context
 from wake.core.event_log import EventLog
 from wake.store.base import SessionStore
+from wake.tenancy import TenantContext
 from wake.types import Event
 
 logger = structlog.get_logger(__name__)
@@ -57,6 +58,7 @@ async def stream_session(
     max_events: int | None = None,
     event_log: EventLog = Depends(get_event_log),
     session_store: SessionStore = Depends(get_session_store),
+    tenant: TenantContext = Depends(get_tenant_context),
 ) -> EventSourceResponse:
     """Stream session events as SSE.
 
@@ -64,7 +66,7 @@ async def stream_session(
     `max_events` (test-only convenience) closes the stream after N events have
     been yielded; production clients should rely on natural disconnection.
     """
-    if await session_store.get(session_id) is None:
+    if await session_store.get(session_id, workspace_id=tenant.workspace_id) is None:
         raise HTTPException(status_code=404, detail="session not found")
 
     poll_interval = HEARTBEAT_INTERVAL_S
@@ -73,7 +75,7 @@ async def stream_session(
         # Resolve resume point.
         cursor: int = since if since is not None else 0
         if last_event_id and since is None:
-            history = await event_log.get(session_id)
+            history = await event_log.get(session_id, workspace_id=tenant.workspace_id)
             for ev in history:
                 if ev.id == last_event_id:
                     cursor = ev.seq + 1
@@ -82,7 +84,11 @@ async def stream_session(
         emitted = 0
 
         # Replay anything the client missed first.
-        backlog = await event_log.get(session_id, since=cursor)
+        backlog = await event_log.get(
+            session_id,
+            since=cursor,
+            workspace_id=tenant.workspace_id,
+        )
         for ev in backlog:
             yield _event_to_sse(ev)
             cursor = max(cursor, ev.seq + 1)
@@ -95,7 +101,10 @@ async def stream_session(
 
         async def _pump() -> None:
             try:
-                subscription = await event_log.subscribe(session_id)
+                subscription = await event_log.subscribe(
+                    session_id,
+                    workspace_id=tenant.workspace_id,
+                )
                 async for ev in subscription:
                     if ev.seq < cursor:
                         continue

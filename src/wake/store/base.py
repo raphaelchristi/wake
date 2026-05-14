@@ -26,6 +26,7 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from typing import Any
 
+from wake.tenancy import DEFAULT_ORGANIZATION_ID, DEFAULT_WORKSPACE_ID
 from wake.types import (
     AgentConfig,
     EnvironmentConfig,
@@ -61,6 +62,8 @@ class EventStore(ABC):
         payload: dict[str, Any],
         parent_id: str | None = None,
         metadata: dict[str, Any] | None = None,
+        organization_id: str = DEFAULT_ORGANIZATION_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> Event:
         """Append an event to ``session_id``'s log.
 
@@ -70,11 +73,17 @@ class EventStore(ABC):
         """
 
     @abstractmethod
-    async def get(self, session_id: str, since: int = 0) -> list[Event]:
+    async def get(
+        self,
+        session_id: str,
+        since: int = 0,
+        *,
+        workspace_id: str | None = None,
+    ) -> list[Event]:
         """Return events for ``session_id`` with ``seq >= since``, ordered."""
 
     @abstractmethod
-    async def get_one(self, event_id: str) -> Event | None:
+    async def get_one(self, event_id: str, *, workspace_id: str | None = None) -> Event | None:
         """Return a single event by ULID, or ``None`` if not found."""
 
     @abstractmethod
@@ -82,6 +91,8 @@ class EventStore(ABC):
         self,
         session_id: str,
         since: int = 0,
+        *,
+        workspace_id: str | None = None,
     ) -> AsyncIterator[Event]:
         """Yield events for ``session_id`` as they are appended.
 
@@ -93,7 +104,7 @@ class EventStore(ABC):
         # implementations; ABC just specifies the signature.
 
     @abstractmethod
-    async def count(self, session_id: str) -> int:
+    async def count(self, session_id: str, *, workspace_id: str | None = None) -> int:
         """Return total number of events on the session."""
 
 
@@ -125,15 +136,25 @@ class AgentStore(ABC):
         skills: list[dict[str, Any]] | None = None,
         description: str | None = None,
         metadata: dict[str, str] | None = None,
+        organization_id: str = DEFAULT_ORGANIZATION_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> AgentConfig:
         """Create a new agent (version 1) and return it."""
 
     @abstractmethod
-    async def get(self, id: str, version: int | None = None) -> AgentConfig | None:
+    async def get(
+        self,
+        id: str,
+        version: int | None = None,
+        *,
+        workspace_id: str | None = None,
+    ) -> AgentConfig | None:
         """Return an agent by id. Latest version when ``version`` is None."""
 
     @abstractmethod
-    async def update(self, id: str, **changes: Any) -> AgentConfig:
+    async def update(
+        self, id: str, *, workspace_id: str | None = None, **changes: Any
+    ) -> AgentConfig:
         """Update an agent. Returns existing or newly-versioned config.
 
         If the change set is a no-op (content hash unchanged), the current
@@ -142,16 +163,18 @@ class AgentStore(ABC):
 
     @abstractmethod
     async def list(  # noqa: A003 — public API name fixed by contract
-        self, *, include_archived: bool = False
+        self, *, include_archived: bool = False, workspace_id: str | None = None
     ) -> builtins.list[AgentConfig]:
         """List agents (latest versions only)."""
 
     @abstractmethod
-    async def list_versions(self, id: str) -> builtins.list[AgentConfig]:
+    async def list_versions(
+        self, id: str, *, workspace_id: str | None = None
+    ) -> builtins.list[AgentConfig]:
         """List every version of a given agent, oldest first."""
 
     @abstractmethod
-    async def archive(self, id: str) -> AgentConfig:
+    async def archive(self, id: str, *, workspace_id: str | None = None) -> AgentConfig:
         """Set ``archived_at`` on the agent and return the latest version."""
 
 
@@ -165,21 +188,30 @@ class EnvironmentStore(ABC):
     Managed Agents)."""
 
     @abstractmethod
-    async def create(self, name: str, config: dict[str, Any]) -> EnvironmentConfig: ...
+    async def create(
+        self,
+        name: str,
+        config: dict[str, Any],
+        *,
+        organization_id: str = DEFAULT_ORGANIZATION_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
+    ) -> EnvironmentConfig: ...
 
     @abstractmethod
-    async def get(self, id: str) -> EnvironmentConfig | None: ...
+    async def get(
+        self, id: str, *, workspace_id: str | None = None
+    ) -> EnvironmentConfig | None: ...
 
     @abstractmethod
     async def list(
-        self, *, include_archived: bool = False
+        self, *, include_archived: bool = False, workspace_id: str | None = None
     ) -> builtins.list[EnvironmentConfig]: ...
 
     @abstractmethod
-    async def archive(self, id: str) -> EnvironmentConfig: ...
+    async def archive(self, id: str, *, workspace_id: str | None = None) -> EnvironmentConfig: ...
 
     @abstractmethod
-    async def delete(self, id: str) -> None: ...
+    async def delete(self, id: str, *, workspace_id: str | None = None) -> None: ...
 
 
 # ---------------------------------------------------------------------------
@@ -197,18 +229,25 @@ class SessionStore(ABC):
         agent_version: int,
         environment_id: str | None = None,
         metadata: dict[str, str] | None = None,
+        organization_id: str = DEFAULT_ORGANIZATION_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> Session: ...
 
     @abstractmethod
-    async def get(self, id: str) -> Session | None: ...
+    async def get(self, id: str, *, workspace_id: str | None = None) -> Session | None: ...
 
     @abstractmethod
     async def list(
-        self, *, status: SessionStatus | None = None
+        self,
+        *,
+        status: SessionStatus | None = None,
+        workspace_id: str | None = None,
     ) -> builtins.list[Session]: ...
 
     @abstractmethod
-    async def update_status(self, id: str, status: SessionStatus) -> Session: ...
+    async def update_status(
+        self, id: str, status: SessionStatus, *, workspace_id: str | None = None
+    ) -> Session: ...
 
     @abstractmethod
     async def set_container(
@@ -216,7 +255,8 @@ class SessionStore(ABC):
         id: str,
         container_id: str | None,
         workspace_path: str | None = None,
+        workspace_id: str | None = None,
     ) -> Session: ...
 
     @abstractmethod
-    async def delete(self, id: str) -> None: ...
+    async def delete(self, id: str, *, workspace_id: str | None = None) -> None: ...

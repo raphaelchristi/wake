@@ -18,8 +18,9 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
-from wake.api.dependencies import get_agent_store
-from wake.store.base import AgentStore
+from wake.api.dependencies import get_agent_store, get_tenant_context
+from wake.store.base import AgentStore, StoreError
+from wake.tenancy import TenantContext
 from wake.types import AgentConfig, McpServerConfig, ModelConfig, ToolConfig
 
 router = APIRouter(prefix="/v1/agents", tags=["agents"])
@@ -53,6 +54,7 @@ class AgentList(BaseModel):
 async def create_agent(
     body: AgentCreate,
     store: AgentStore = Depends(get_agent_store),
+    tenant: TenantContext = Depends(get_tenant_context),
 ) -> AgentConfig:
     return await store.create(
         name=body.name,
@@ -62,12 +64,17 @@ async def create_agent(
         mcp_servers=body.mcp_servers,
         description=body.description,
         metadata=body.metadata,
+        organization_id=tenant.organization_id,
+        workspace_id=tenant.workspace_id,
     )
 
 
 @router.get("", response_model=AgentList)
-async def list_agents(store: AgentStore = Depends(get_agent_store)) -> AgentList:
-    return AgentList(data=await store.list())
+async def list_agents(
+    store: AgentStore = Depends(get_agent_store),
+    tenant: TenantContext = Depends(get_tenant_context),
+) -> AgentList:
+    return AgentList(data=await store.list(workspace_id=tenant.workspace_id))
 
 
 @router.get("/{agent_id}", response_model=AgentConfig)
@@ -75,8 +82,9 @@ async def get_agent(
     agent_id: str,
     version: int | None = None,
     store: AgentStore = Depends(get_agent_store),
+    tenant: TenantContext = Depends(get_tenant_context),
 ) -> AgentConfig:
-    agent = await store.get(agent_id, version=version)
+    agent = await store.get(agent_id, version=version, workspace_id=tenant.workspace_id)
     if agent is None:
         raise HTTPException(status_code=404, detail="agent not found")
     return agent
@@ -87,13 +95,14 @@ async def update_agent(
     agent_id: str,
     body: AgentUpdate,
     store: AgentStore = Depends(get_agent_store),
+    tenant: TenantContext = Depends(get_tenant_context),
 ) -> AgentConfig:
     changes: dict[str, Any] = {
         k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None
     }
     try:
-        return await store.update(agent_id, **changes)
-    except KeyError as e:
+        return await store.update(agent_id, workspace_id=tenant.workspace_id, **changes)
+    except (KeyError, StoreError) as e:
         raise HTTPException(status_code=404, detail="agent not found") from e
 
 
@@ -101,10 +110,11 @@ async def update_agent(
 async def archive_agent(
     agent_id: str,
     store: AgentStore = Depends(get_agent_store),
+    tenant: TenantContext = Depends(get_tenant_context),
 ) -> AgentConfig:
     try:
-        return await store.archive(agent_id)
-    except KeyError as e:
+        return await store.archive(agent_id, workspace_id=tenant.workspace_id)
+    except (KeyError, StoreError) as e:
         raise HTTPException(status_code=404, detail="agent not found") from e
 
 
@@ -112,8 +122,9 @@ async def archive_agent(
 async def list_agent_versions(
     agent_id: str,
     store: AgentStore = Depends(get_agent_store),
+    tenant: TenantContext = Depends(get_tenant_context),
 ) -> AgentList:
-    versions = await store.list_versions(agent_id)
+    versions = await store.list_versions(agent_id, workspace_id=tenant.workspace_id)
     if not versions:
         raise HTTPException(status_code=404, detail="agent not found")
     return AgentList(data=versions)

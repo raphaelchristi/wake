@@ -161,10 +161,12 @@ pnpm format           # prettier --write .
 
 ## Authentication
 
-The dashboard authenticates against the backend with a single shared
-**API key** that travels in the `X-Wake-API-Key` header. There is no
-multi-tenant user model in v0.5; the goal is to make self-hosting
-trivial. OAuth-style login is on the roadmap for v1.1.
+The dashboard authenticates against the backend with an **API key** that
+travels in the `X-Wake-API-Key` header. Data access is scoped by
+`X-Wake-Organization-Id` and `X-Wake-Workspace-Id`; when those headers
+are absent Wake falls back to `default/default` for local and
+single-tenant deployments. Product teams should inject the tenant
+headers from their own auth layer or reverse proxy.
 
 ### Generating an API key
 
@@ -698,9 +700,10 @@ chart in a `min-height` block.
 ## FAQ
 
 **Is the dashboard production-ready?**
-For self-hosted deployments — yes. We use it in-house. It is
-single-tenant, API-key authenticated, and assumes the backend is the
-authority on all data. Multi-tenant + SSO are on the roadmap.
+For self-hosted deployments — yes. We use it in-house. It is API-key
+authenticated, workspace-scoped, and assumes the backend is the authority
+on all data. SSO is still expected to live at the reverse-proxy or
+product gateway layer.
 
 **Why Next.js 15 instead of plain React + Vite?**
 RSC + the App Router give us file-system routing, layouts, and a clean

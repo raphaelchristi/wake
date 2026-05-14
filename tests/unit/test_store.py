@@ -19,7 +19,7 @@ from wake.types import McpServerConfig, ModelConfig, ToolConfig
 
 
 @pytest.fixture
-async def store() -> "SQLiteStore":
+async def store() -> SQLiteStore:
     # File-backed temp DB — in-memory SQLite has poor concurrent
     # visibility semantics via aiosqlite even with StaticPool.
     fd, path = tempfile.mkstemp(suffix=".db", prefix="wake-test-")
@@ -37,9 +37,7 @@ async def store() -> "SQLiteStore":
 
 
 async def test_agent_create_get(store: SQLiteStore) -> None:
-    agent = await store.agents.create(
-        name="bot", model=ModelConfig(id="claude-opus-4-7")
-    )
+    agent = await store.agents.create(name="bot", model=ModelConfig(id="claude-opus-4-7"))
     assert agent.version == 1
     assert agent.archived_at is None
     fetched = await store.agents.get(agent.id)
@@ -96,11 +94,33 @@ async def test_agent_list_excludes_archived_by_default(store: SQLiteStore) -> No
     assert {x.id for x in all_} == {a.id, b.id}
 
 
+async def test_agent_store_filters_by_workspace(store: SQLiteStore) -> None:
+    a = await store.agents.create(
+        name="a",
+        model=ModelConfig(id="c"),
+        organization_id="org",
+        workspace_id="workspace_a",
+    )
+    b = await store.agents.create(
+        name="b",
+        model=ModelConfig(id="c"),
+        organization_id="org",
+        workspace_id="workspace_b",
+    )
+
+    assert (await store.agents.get(a.id, workspace_id="workspace_a")) is not None
+    assert await store.agents.get(a.id, workspace_id="workspace_b") is None
+    visible = await store.agents.list(workspace_id="workspace_a")
+    assert [agent.id for agent in visible] == [a.id]
+    assert (await store.agents.update(a.id, workspace_id="workspace_a", system="x")).version == 2
+    with pytest.raises(StoreError):
+        await store.agents.update(a.id, workspace_id="workspace_b", system="hidden")
+    assert await store.agents.list_versions(b.id, workspace_id="workspace_a") == []
+
+
 async def test_agent_with_mcp_servers(store: SQLiteStore) -> None:
     mcp = McpServerConfig(name="fs", transport="stdio", command="server")
-    agent = await store.agents.create(
-        name="bot", model=ModelConfig(id="c"), mcp_servers=[mcp]
-    )
+    agent = await store.agents.create(name="bot", model=ModelConfig(id="c"), mcp_servers=[mcp])
     assert len(agent.mcp_servers) == 1 and agent.mcp_servers[0].name == "fs"
 
 
@@ -108,9 +128,7 @@ async def test_agent_with_mcp_servers(store: SQLiteStore) -> None:
 
 
 async def test_environment_crud(store: SQLiteStore) -> None:
-    env = await store.environments.create(
-        name="default", config={"sandbox": {"backend": "docker"}}
-    )
+    env = await store.environments.create(name="default", config={"sandbox": {"backend": "docker"}})
     fetched = await store.environments.get(env.id)
     assert fetched is not None and fetched.name == "default"
     listed = await store.environments.list()
@@ -146,9 +164,7 @@ async def test_session_update_status(store: SQLiteStore) -> None:
 
 async def test_session_set_container(store: SQLiteStore) -> None:
     s = await store.sessions.create(agent_id="ag", agent_version=1)
-    updated = await store.sessions.set_container(
-        s.id, container_id="ctn_123", workspace_path="/w"
-    )
+    updated = await store.sessions.set_container(s.id, container_id="ctn_123", workspace_path="/w")
     assert updated.container_id == "ctn_123"
     assert updated.workspace_path == "/w"
 
@@ -161,6 +177,39 @@ async def test_session_list_by_status(store: SQLiteStore) -> None:
     assert {x.id for x in idle_only} == {s1.id}
     running_only = await store.sessions.list(status="running")
     assert {x.id for x in running_only} == {s2.id}
+
+
+async def test_session_store_filters_by_workspace(store: SQLiteStore) -> None:
+    a = await store.sessions.create(
+        agent_id="ag",
+        agent_version=1,
+        organization_id="org",
+        workspace_id="workspace_a",
+    )
+    await store.sessions.create(
+        agent_id="ag",
+        agent_version=1,
+        organization_id="org",
+        workspace_id="workspace_b",
+    )
+
+    assert (await store.sessions.get(a.id, workspace_id="workspace_a")) is not None
+    assert await store.sessions.get(a.id, workspace_id="workspace_b") is None
+    visible = await store.sessions.list(workspace_id="workspace_a")
+    assert [session.id for session in visible] == [a.id]
+    assert (
+        await store.sessions.update_status(
+            a.id,
+            "running",
+            workspace_id="workspace_a",
+        )
+    ).status == "running"
+    with pytest.raises(StoreError):
+        await store.sessions.update_status(
+            a.id,
+            "idle",
+            workspace_id="workspace_b",
+        )
 
 
 async def test_session_delete(store: SQLiteStore) -> None:

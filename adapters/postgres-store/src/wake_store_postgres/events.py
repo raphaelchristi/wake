@@ -26,6 +26,7 @@ import structlog
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from wake.store.base import EventStore
+from wake.tenancy import DEFAULT_ORGANIZATION_ID, DEFAULT_WORKSPACE_ID
 from wake.types import Event, EventType
 
 from wake_store_postgres._helpers import new_ulid, utcnow
@@ -48,6 +49,8 @@ def _channel_name(session_id: str) -> str:
 def _row_to_event(row: EventRow) -> Event:
     return Event(
         id=row.id,
+        organization_id=row.organization_id,
+        workspace_id=row.workspace_id,
         session_id=row.session_id,
         seq=row.seq,
         type=row.type,  # type: ignore[arg-type]
@@ -80,6 +83,8 @@ class PostgresEventStore(EventStore):
         payload: dict[str, Any],
         parent_id: str | None = None,
         metadata: dict[str, Any] | None = None,
+        organization_id: str = DEFAULT_ORGANIZATION_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> Event:
         """Append an event, atomically allocating ``seq``.
 
@@ -101,11 +106,15 @@ class PostgresEventStore(EventStore):
                 {"sid": session_id},
             )
             current_max = await s.scalar(
-                select(func.max(EventRow.seq)).where(EventRow.session_id == session_id)
+                select(func.max(EventRow.seq))
+                .where(EventRow.session_id == session_id)
+                .where(EventRow.workspace_id == workspace_id)
             )
             next_seq = 0 if current_max is None else int(current_max) + 1
             row = EventRow(
                 id=event_id,
+                organization_id=organization_id,
+                workspace_id=workspace_id,
                 session_id=session_id,
                 seq=next_seq,
                 type=event_type,
@@ -124,6 +133,8 @@ class PostgresEventStore(EventStore):
         )
         return Event(
             id=event_id,
+            organization_id=organization_id,
+            workspace_id=workspace_id,
             session_id=session_id,
             seq=next_seq,
             type=event_type,
@@ -133,40 +144,47 @@ class PostgresEventStore(EventStore):
             created_at=now,
         )
 
-    async def get(self, session_id: str, since: int = 0) -> list[Event]:
+    async def get(
+        self,
+        session_id: str,
+        since: int = 0,
+        *,
+        workspace_id: str | None = None,
+    ) -> list[Event]:
         async with self._sessionmaker() as s:
-            rows = (
-                (
-                    await s.execute(
-                        select(EventRow)
-                        .where(EventRow.session_id == session_id)
-                        .where(EventRow.seq >= since)
-                        .order_by(EventRow.seq)
-                    )
-                )
-                .scalars()
-                .all()
+            stmt = (
+                select(EventRow)
+                .where(EventRow.session_id == session_id)
+                .where(EventRow.seq >= since)
             )
+            if workspace_id is not None:
+                stmt = stmt.where(EventRow.workspace_id == workspace_id)
+            rows = (await s.execute(stmt.order_by(EventRow.seq))).scalars().all()
         return [_row_to_event(r) for r in rows]
 
-    async def get_one(self, event_id: str) -> Event | None:
+    async def get_one(self, event_id: str, *, workspace_id: str | None = None) -> Event | None:
         # Without the session_id we'd have to scan every partition.
         # ULIDs are globally unique so we just hit each partition via
         # the ``id`` column; the planner uses the per-partition btree.
         async with self._sessionmaker() as s:
-            row = (
-                await s.execute(select(EventRow).where(EventRow.id == event_id))
-            ).scalar_one_or_none()
+            stmt = select(EventRow).where(EventRow.id == event_id)
+            if workspace_id is not None:
+                stmt = stmt.where(EventRow.workspace_id == workspace_id)
+            row = (await s.execute(stmt)).scalar_one_or_none()
         return _row_to_event(row) if row else None
 
     async def subscribe(
         self,
         session_id: str,
         since: int = 0,
+        *,
+        workspace_id: str | None = None,
     ) -> AsyncIterator[Event]:
-        return self._subscribe_impl(session_id, since)
+        return self._subscribe_impl(session_id, since, workspace_id=workspace_id)
 
-    async def _subscribe_impl(self, session_id: str, since: int) -> AsyncIterator[Event]:
+    async def _subscribe_impl(
+        self, session_id: str, since: int, *, workspace_id: str | None
+    ) -> AsyncIterator[Event]:
         """LISTEN/NOTIFY-driven subscriber with a polling fallback.
 
         Yields backlog (``seq >= since``) first, then live events. If
@@ -179,7 +197,11 @@ class PostgresEventStore(EventStore):
         listen_task = asyncio.create_task(self._listen_loop(session_id, listen_queue))
         try:
             while True:
-                backlog = await self.get(session_id, since=cursor)
+                backlog = await self.get(
+                    session_id,
+                    since=cursor,
+                    workspace_id=workspace_id,
+                )
                 for ev in backlog:
                     yield ev
                     cursor = ev.seq + 1
@@ -238,11 +260,14 @@ class PostgresEventStore(EventStore):
                 error=str(e),
             )
 
-    async def count(self, session_id: str) -> int:
+    async def count(self, session_id: str, *, workspace_id: str | None = None) -> int:
         async with self._sessionmaker() as s:
-            n = await s.scalar(
+            stmt = (
                 select(func.count()).select_from(EventRow).where(EventRow.session_id == session_id)
             )
+            if workspace_id is not None:
+                stmt = stmt.where(EventRow.workspace_id == workspace_id)
+            n = await s.scalar(stmt)
         return int(n or 0)
 
 

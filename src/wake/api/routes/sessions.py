@@ -13,7 +13,7 @@ POST   /v1/sessions/{id}/archive          archive
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
@@ -23,9 +23,11 @@ from wake.api.dependencies import (
     get_session_machine,
     get_session_store,
     get_state,
+    get_tenant_context,
 )
 from wake.core.session import SessionStateMachine
-from wake.store.base import AgentStore, SessionStore
+from wake.store.base import AgentStore, SessionStore, StoreError
+from wake.tenancy import TenantContext
 from wake.types import Session, SessionStatus
 
 router = APIRouter(prefix="/v1/sessions", tags=["sessions"])
@@ -46,8 +48,9 @@ async def create_session(
     body: SessionCreate,
     agent_store: AgentStore = Depends(get_agent_store),
     machine: SessionStateMachine = Depends(get_session_machine),
+    tenant: TenantContext = Depends(get_tenant_context),
 ) -> Session:
-    agent = await agent_store.get(body.agent_id)
+    agent = await agent_store.get(body.agent_id, workspace_id=tenant.workspace_id)
     if agent is None:
         raise HTTPException(status_code=404, detail="agent not found")
     return await machine.create(
@@ -55,12 +58,15 @@ async def create_session(
         agent_version=agent.version,
         environment_id=body.environment_id,
         metadata=body.metadata,
+        organization_id=tenant.organization_id,
+        workspace_id=tenant.workspace_id,
     )
 
 
 @router.get("", response_model=SessionList)
 async def list_sessions(
     store: SessionStore = Depends(get_session_store),
+    tenant: TenantContext = Depends(get_tenant_context),
     agent: str | None = Query(default=None, description="Filter by agent_id (exact)."),
     status_: SessionStatus | None = Query(
         default=None,
@@ -100,7 +106,7 @@ async def list_sessions(
     Phase 1 — just a ``{ "data": [...] }`` envelope — so existing clients keep
     working. New clients pass query params to narrow the view.
     """
-    all_sessions = await store.list()
+    all_sessions = await store.list(workspace_id=tenant.workspace_id)
     filtered = _filter_sessions(
         all_sessions,
         agent=agent,
@@ -130,7 +136,7 @@ def _filter_sessions(
         if dt is None:
             return None
         if dt.tzinfo is None:
-            return dt.replace(tzinfo=timezone.utc)
+            return dt.replace(tzinfo=UTC)
         return dt
 
     since_n = _ensure_aware(since)
@@ -172,8 +178,9 @@ def _filter_sessions(
 async def get_session(
     session_id: str,
     store: SessionStore = Depends(get_session_store),
+    tenant: TenantContext = Depends(get_tenant_context),
 ) -> Session:
-    session = await store.get(session_id)
+    session = await store.get(session_id, workspace_id=tenant.workspace_id)
     if session is None:
         raise HTTPException(status_code=404, detail="session not found")
     return session
@@ -184,6 +191,7 @@ async def delete_session(
     session_id: str,
     request: Request,
     store: SessionStore = Depends(get_session_store),
+    tenant: TenantContext = Depends(get_tenant_context),
 ) -> None:
     # Best-effort: tear down sandbox first
     state = get_state(request)
@@ -194,8 +202,8 @@ async def delete_session(
         except Exception:  # noqa: BLE001
             pass
     try:
-        await store.delete(session_id)
-    except KeyError as e:
+        await store.delete(session_id, workspace_id=tenant.workspace_id)
+    except (KeyError, StoreError) as e:
         raise HTTPException(status_code=404, detail="session not found") from e
 
 
@@ -204,12 +212,13 @@ async def interrupt_session(
     session_id: str,
     background: BackgroundTasks,
     machine: SessionStateMachine = Depends(get_session_machine),
+    tenant: TenantContext = Depends(get_tenant_context),
 ) -> Session:
-    sess = await machine.get(session_id)
+    sess = await machine.get(session_id, workspace_id=tenant.workspace_id)
     if sess is None:
         raise HTTPException(status_code=404, detail="session not found")
     try:
-        return await machine.terminate(session_id)
+        return await machine.terminate(session_id, workspace_id=tenant.workspace_id)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
 
@@ -218,11 +227,12 @@ async def interrupt_session(
 async def archive_session(
     session_id: str,
     machine: SessionStateMachine = Depends(get_session_machine),
+    tenant: TenantContext = Depends(get_tenant_context),
 ) -> Session:
-    sess = await machine.get(session_id)
+    sess = await machine.get(session_id, workspace_id=tenant.workspace_id)
     if sess is None:
         raise HTTPException(status_code=404, detail="session not found")
     try:
-        return await machine.terminate(session_id)
+        return await machine.terminate(session_id, workspace_id=tenant.workspace_id)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e

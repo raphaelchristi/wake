@@ -13,6 +13,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from wake.tenancy import DEFAULT_ORGANIZATION_ID, DEFAULT_WORKSPACE_ID
+
 # ============================================================================
 # Event types
 # ============================================================================
@@ -43,6 +45,8 @@ class Event(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     id: str  # ULID, 26 chars
+    organization_id: str = DEFAULT_ORGANIZATION_ID
+    workspace_id: str = DEFAULT_WORKSPACE_ID
     session_id: str
     seq: int  # monotonic per session, starts at 0
     type: EventType
@@ -120,6 +124,8 @@ SessionStatus = Literal["idle", "running", "rescheduling", "terminated"]
 
 class AgentConfig(BaseModel):
     id: str
+    organization_id: str = DEFAULT_ORGANIZATION_ID
+    workspace_id: str = DEFAULT_WORKSPACE_ID
     name: str
     model: ModelConfig
     system: str | None = None
@@ -136,6 +142,8 @@ class AgentConfig(BaseModel):
 
 class EnvironmentConfig(BaseModel):
     id: str
+    organization_id: str = DEFAULT_ORGANIZATION_ID
+    workspace_id: str = DEFAULT_WORKSPACE_ID
     name: str
     config: dict[str, Any]  # type, packages, networking, sandbox backend, etc.
     created_at: datetime
@@ -144,6 +152,8 @@ class EnvironmentConfig(BaseModel):
 
 class Session(BaseModel):
     id: str
+    organization_id: str = DEFAULT_ORGANIZATION_ID
+    workspace_id: str = DEFAULT_WORKSPACE_ID
     agent_id: str
     agent_version: int
     environment_id: str | None = None

@@ -14,10 +14,11 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from wake.api.dependencies import get_event_log, get_session_machine
+from wake.api.dependencies import get_event_log, get_session_machine, get_tenant_context
 from wake.api.state_reconstruction import reconstruct_state_at
 from wake.core.event_log import EventLog
 from wake.core.session import SessionStateMachine
+from wake.tenancy import TenantContext
 
 router = APIRouter(prefix="/v1/sessions", tags=["replay"])
 
@@ -41,15 +42,20 @@ async def get_state_at(
     seq: int,
     event_log: EventLog = Depends(get_event_log),
     machine: SessionStateMachine = Depends(get_session_machine),
+    tenant: TenantContext = Depends(get_tenant_context),
 ) -> StateAtResponse:
     if seq < 0:
         raise HTTPException(status_code=422, detail="seq must be >= 0")
 
-    session = await machine.get(session_id)
+    session = await machine.get(session_id, workspace_id=tenant.workspace_id)
     if session is None:
         raise HTTPException(status_code=404, detail="session not found")
 
-    events = await event_log.get(session_id, since=0)
+    events = await event_log.get(
+        session_id,
+        since=0,
+        workspace_id=tenant.workspace_id,
+    )
     state = reconstruct_state_at(events, seq)
     return StateAtResponse(
         seq=state.seq,

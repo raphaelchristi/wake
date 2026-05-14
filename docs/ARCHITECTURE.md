@@ -394,7 +394,12 @@ environment:
 
 ## Multi-tenant e concorrência
 
-Sessão = unidade de isolamento. Cada sessão tem:
+Workspace = fronteira de isolamento de dados. `organization_id` agrupa
+workspaces; `workspace_id` escopa agents, environments, sessions, events,
+SSE, replay e métricas. Adaptadores de produto podem mapear customer,
+projeto, conta ou tenant para esses campos sem depender de metadata.
+
+Sessão = unidade de execução dentro do workspace. Cada sessão tem:
 
 - Event log próprio (por session_id)
 - Container próprio (se provisionado)

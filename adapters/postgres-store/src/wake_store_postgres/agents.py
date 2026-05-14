@@ -25,6 +25,7 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from wake.store.base import AgentStore, StoreError
+from wake.tenancy import DEFAULT_ORGANIZATION_ID, DEFAULT_WORKSPACE_ID
 from wake.types import AgentConfig, McpServerConfig, ModelConfig, ToolConfig
 
 from wake_store_postgres._helpers import content_hash, new_ulid, utcnow
@@ -100,6 +101,8 @@ def _agent_content_payload(
 def _vrow_to_config(agent: AgentRow, v: AgentVersionRow) -> AgentConfig:
     return AgentConfig(
         id=agent.id,
+        organization_id=agent.organization_id,
+        workspace_id=agent.workspace_id,
         name=v.name,
         model=ModelConfig.model_validate(v.model),
         system=v.system,
@@ -137,6 +140,8 @@ class PostgresAgentStore(AgentStore):
         skills: list[dict[str, Any]] | None = None,
         description: str | None = None,
         metadata: dict[str, str] | None = None,
+        organization_id: str = DEFAULT_ORGANIZATION_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> AgentConfig:
         tools_norm = _normalise_tools(tools)
         mcp_norm = _normalise_mcp(mcp_servers)
@@ -159,6 +164,8 @@ class PostgresAgentStore(AgentStore):
             s.add(
                 AgentRow(
                     id=agent_id,
+                    organization_id=organization_id,
+                    workspace_id=workspace_id,
                     name=name,
                     current_version=1,
                     created_at=now,
@@ -184,6 +191,8 @@ class PostgresAgentStore(AgentStore):
         log.info("agent.created", agent_id=agent_id, name=name)
         return AgentConfig(
             id=agent_id,
+            organization_id=organization_id,
+            workspace_id=workspace_id,
             name=name,
             model=model,
             system=system,
@@ -198,10 +207,18 @@ class PostgresAgentStore(AgentStore):
             archived_at=None,
         )
 
-    async def get(self, id: str, version: int | None = None) -> AgentConfig | None:
+    async def get(
+        self,
+        id: str,
+        version: int | None = None,
+        *,
+        workspace_id: str | None = None,
+    ) -> AgentConfig | None:
         async with self._sessionmaker() as s:
             agent = await s.get(AgentRow, id)
             if agent is None:
+                return None
+            if workspace_id is not None and agent.workspace_id != workspace_id:
                 return None
             target_version = version if version is not None else agent.current_version
             vrow = await s.get(AgentVersionRow, (id, target_version))
@@ -209,10 +226,12 @@ class PostgresAgentStore(AgentStore):
                 return None
             return _vrow_to_config(agent, vrow)
 
-    async def update(self, id: str, **changes: Any) -> AgentConfig:
+    async def update(
+        self, id: str, *, workspace_id: str | None = None, **changes: Any
+    ) -> AgentConfig:
         async with self._sessionmaker() as s, s.begin():
             agent = await s.get(AgentRow, id)
-            if agent is None:
+            if agent is None or (workspace_id is not None and agent.workspace_id != workspace_id):
                 raise StoreError(f"agent {id!r} not found")
             current = await s.get(AgentVersionRow, (id, agent.current_version))
             if current is None:
@@ -273,9 +292,13 @@ class PostgresAgentStore(AgentStore):
             assert new_row is not None
             return _vrow_to_config(agent, new_row)
 
-    async def list(self, *, include_archived: bool = False) -> builtins.list[AgentConfig]:
+    async def list(
+        self, *, include_archived: bool = False, workspace_id: str | None = None
+    ) -> builtins.list[AgentConfig]:
         async with self._sessionmaker() as s:
             stmt = select(AgentRow)
+            if workspace_id is not None:
+                stmt = stmt.where(AgentRow.workspace_id == workspace_id)
             if not include_archived:
                 stmt = stmt.where(AgentRow.archived_at.is_(None))
             agents = (await s.execute(stmt.order_by(AgentRow.created_at))).scalars().all()
@@ -286,10 +309,14 @@ class PostgresAgentStore(AgentStore):
                     out.append(_vrow_to_config(a, v))
             return out
 
-    async def list_versions(self, id: str) -> builtins.list[AgentConfig]:
+    async def list_versions(
+        self, id: str, *, workspace_id: str | None = None
+    ) -> builtins.list[AgentConfig]:
         async with self._sessionmaker() as s:
             agent = await s.get(AgentRow, id)
             if agent is None:
+                return []
+            if workspace_id is not None and agent.workspace_id != workspace_id:
                 return []
             rows = (
                 (
@@ -304,10 +331,10 @@ class PostgresAgentStore(AgentStore):
             )
             return [_vrow_to_config(agent, r) for r in rows]
 
-    async def archive(self, id: str) -> AgentConfig:
+    async def archive(self, id: str, *, workspace_id: str | None = None) -> AgentConfig:
         async with self._sessionmaker() as s, s.begin():
             agent = await s.get(AgentRow, id)
-            if agent is None:
+            if agent is None or (workspace_id is not None and agent.workspace_id != workspace_id):
                 raise StoreError(f"agent {id!r} not found")
             agent.archived_at = utcnow()
             vrow = await s.get(AgentVersionRow, (id, agent.current_version))

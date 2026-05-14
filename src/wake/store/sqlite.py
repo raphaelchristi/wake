@@ -59,6 +59,7 @@ from wake.store.base import (
     SessionStore,
     StoreError,
 )
+from wake.tenancy import DEFAULT_ORGANIZATION_ID, DEFAULT_WORKSPACE_ID
 from wake.types import (
     AgentConfig,
     EnvironmentConfig,
@@ -87,6 +88,12 @@ class AgentRow(Base):
     __tablename__ = "agents"
 
     id: Mapped[str] = mapped_column(String(26), primary_key=True)
+    organization_id: Mapped[str] = mapped_column(
+        String, nullable=False, default=DEFAULT_ORGANIZATION_ID
+    )
+    workspace_id: Mapped[str] = mapped_column(
+        String, nullable=False, default=DEFAULT_WORKSPACE_ID, index=True
+    )
     name: Mapped[str] = mapped_column(String, nullable=False)
     current_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
@@ -96,9 +103,7 @@ class AgentRow(Base):
 class AgentVersionRow(Base):
     __tablename__ = "agent_versions"
 
-    agent_id: Mapped[str] = mapped_column(
-        String(26), ForeignKey("agents.id"), primary_key=True
-    )
+    agent_id: Mapped[str] = mapped_column(String(26), ForeignKey("agents.id"), primary_key=True)
     version: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String, nullable=False)
     model: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
@@ -116,6 +121,12 @@ class EnvironmentRow(Base):
     __tablename__ = "environments"
 
     id: Mapped[str] = mapped_column(String(26), primary_key=True)
+    organization_id: Mapped[str] = mapped_column(
+        String, nullable=False, default=DEFAULT_ORGANIZATION_ID
+    )
+    workspace_id: Mapped[str] = mapped_column(
+        String, nullable=False, default=DEFAULT_WORKSPACE_ID, index=True
+    )
     name: Mapped[str] = mapped_column(String, nullable=False)
     config: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
@@ -126,6 +137,12 @@ class SessionRow(Base):
     __tablename__ = "sessions"
 
     id: Mapped[str] = mapped_column(String(26), primary_key=True)
+    organization_id: Mapped[str] = mapped_column(
+        String, nullable=False, default=DEFAULT_ORGANIZATION_ID
+    )
+    workspace_id: Mapped[str] = mapped_column(
+        String, nullable=False, default=DEFAULT_WORKSPACE_ID, index=True
+    )
     agent_id: Mapped[str] = mapped_column(String(26), nullable=False)
     agent_version: Mapped[int] = mapped_column(Integer, nullable=False)
     environment_id: Mapped[str | None] = mapped_column(String(26), nullable=True)
@@ -141,6 +158,12 @@ class EventRow(Base):
     __tablename__ = "events"
 
     id: Mapped[str] = mapped_column(String(26), primary_key=True)
+    organization_id: Mapped[str] = mapped_column(
+        String, nullable=False, default=DEFAULT_ORGANIZATION_ID
+    )
+    workspace_id: Mapped[str] = mapped_column(
+        String, nullable=False, default=DEFAULT_WORKSPACE_ID, index=True
+    )
     session_id: Mapped[str] = mapped_column(String(26), nullable=False, index=True)
     seq: Mapped[int] = mapped_column(Integer, nullable=False)
     type: Mapped[str] = mapped_column(String, nullable=False)
@@ -207,9 +230,7 @@ class SQLiteStore:
         self._sessionmaker = async_sessionmaker(self.engine, expire_on_commit=False)
         self.events: SQLiteEventStore = SQLiteEventStore(self._sessionmaker)
         self.agents: SQLiteAgentStore = SQLiteAgentStore(self._sessionmaker)
-        self.environments: SQLiteEnvironmentStore = SQLiteEnvironmentStore(
-            self._sessionmaker
-        )
+        self.environments: SQLiteEnvironmentStore = SQLiteEnvironmentStore(self._sessionmaker)
         self.sessions: SQLiteSessionStore = SQLiteSessionStore(self._sessionmaker)
 
     async def initialize(self) -> None:
@@ -267,6 +288,8 @@ class SQLiteEventStore(EventStore):
         payload: dict[str, Any],
         parent_id: str | None = None,
         metadata: dict[str, Any] | None = None,
+        organization_id: str = DEFAULT_ORGANIZATION_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> Event:
         now = _utcnow()
         event_id = _new_ulid()
@@ -274,13 +297,13 @@ class SQLiteEventStore(EventStore):
             async with self._sessionmaker() as s, s.begin():
                 # Allocate next seq.
                 current_max = await s.scalar(
-                    select(func.max(EventRow.seq)).where(
-                        EventRow.session_id == session_id
-                    )
+                    select(func.max(EventRow.seq)).where(EventRow.session_id == session_id)
                 )
                 next_seq = 0 if current_max is None else int(current_max) + 1
                 row = EventRow(
                     id=event_id,
+                    organization_id=organization_id,
+                    workspace_id=workspace_id,
                     session_id=session_id,
                     seq=next_seq,
                     type=event_type,
@@ -306,6 +329,8 @@ class SQLiteEventStore(EventStore):
             self._notifiers[session_id] = asyncio.Event()
         return Event(
             id=event_id,
+            organization_id=organization_id,
+            workspace_id=workspace_id,
             session_id=session_id,
             seq=next_seq,
             type=event_type,
@@ -315,36 +340,47 @@ class SQLiteEventStore(EventStore):
             created_at=_aware(now),
         )
 
-    async def get(self, session_id: str, since: int = 0) -> list[Event]:
+    async def get(
+        self,
+        session_id: str,
+        since: int = 0,
+        *,
+        workspace_id: str | None = None,
+    ) -> list[Event]:
         async with self._sessionmaker() as s:
-            rows = (
-                await s.execute(
-                    select(EventRow)
-                    .where(EventRow.session_id == session_id)
-                    .where(EventRow.seq >= since)
-                    .order_by(EventRow.seq)
-                )
-            ).scalars().all()
+            stmt = (
+                select(EventRow)
+                .where(EventRow.session_id == session_id)
+                .where(EventRow.seq >= since)
+            )
+            if workspace_id is not None:
+                stmt = stmt.where(EventRow.workspace_id == workspace_id)
+            rows = (await s.execute(stmt.order_by(EventRow.seq))).scalars().all()
         return [_row_to_event(r) for r in rows]
 
-    async def get_one(self, event_id: str) -> Event | None:
+    async def get_one(self, event_id: str, *, workspace_id: str | None = None) -> Event | None:
         async with self._sessionmaker() as s:
-            row = await s.get(EventRow, event_id)
+            stmt = select(EventRow).where(EventRow.id == event_id)
+            if workspace_id is not None:
+                stmt = stmt.where(EventRow.workspace_id == workspace_id)
+            row = (await s.execute(stmt)).scalar_one_or_none()
         return _row_to_event(row) if row else None
 
     async def subscribe(
         self,
         session_id: str,
         since: int = 0,
+        *,
+        workspace_id: str | None = None,
     ) -> AsyncIterator[Event]:
-        return self._subscribe_impl(session_id, since)
+        return self._subscribe_impl(session_id, since, workspace_id=workspace_id)
 
     async def _subscribe_impl(
-        self, session_id: str, since: int
+        self, session_id: str, since: int, *, workspace_id: str | None
     ) -> AsyncIterator[Event]:
         cursor = since
         while True:
-            backlog = await self.get(session_id, since=cursor)
+            backlog = await self.get(session_id, since=cursor, workspace_id=workspace_id)
             for ev in backlog:
                 yield ev
                 cursor = ev.seq + 1
@@ -356,19 +392,22 @@ class SQLiteEventStore(EventStore):
             except TimeoutError:
                 continue
 
-    async def count(self, session_id: str) -> int:
+    async def count(self, session_id: str, *, workspace_id: str | None = None) -> int:
         async with self._sessionmaker() as s:
-            n = await s.scalar(
-                select(func.count())
-                .select_from(EventRow)
-                .where(EventRow.session_id == session_id)
+            stmt = (
+                select(func.count()).select_from(EventRow).where(EventRow.session_id == session_id)
             )
+            if workspace_id is not None:
+                stmt = stmt.where(EventRow.workspace_id == workspace_id)
+            n = await s.scalar(stmt)
         return int(n or 0)
 
 
 def _row_to_event(row: EventRow) -> Event:
     return Event(
         id=row.id,
+        organization_id=row.organization_id,
+        workspace_id=row.workspace_id,
         session_id=row.session_id,
         seq=row.seq,
         type=row.type,  # type: ignore[arg-type]
@@ -459,6 +498,8 @@ class SQLiteAgentStore(AgentStore):
         skills: list[dict[str, Any]] | None = None,
         description: str | None = None,
         metadata: dict[str, str] | None = None,
+        organization_id: str = DEFAULT_ORGANIZATION_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> AgentConfig:
         tools_norm = _normalise_tools(tools)
         mcp_norm = _normalise_mcp(mcp_servers)
@@ -481,6 +522,8 @@ class SQLiteAgentStore(AgentStore):
             s.add(
                 AgentRow(
                     id=agent_id,
+                    organization_id=organization_id,
+                    workspace_id=workspace_id,
                     name=name,
                     current_version=1,
                     created_at=now,
@@ -506,6 +549,8 @@ class SQLiteAgentStore(AgentStore):
         log.info("agent.created", agent_id=agent_id, name=name)
         return _build_agent_config(
             agent_id=agent_id,
+            organization_id=organization_id,
+            workspace_id=workspace_id,
             version=1,
             name=name,
             model=model,
@@ -520,10 +565,18 @@ class SQLiteAgentStore(AgentStore):
             archived_at=None,
         )
 
-    async def get(self, id: str, version: int | None = None) -> AgentConfig | None:
+    async def get(
+        self,
+        id: str,
+        version: int | None = None,
+        *,
+        workspace_id: str | None = None,
+    ) -> AgentConfig | None:
         async with self._sessionmaker() as s:
             agent = await s.get(AgentRow, id)
             if agent is None:
+                return None
+            if workspace_id is not None and agent.workspace_id != workspace_id:
                 return None
             target_version = version if version is not None else agent.current_version
             vrow = await s.get(AgentVersionRow, (id, target_version))
@@ -531,23 +584,19 @@ class SQLiteAgentStore(AgentStore):
                 return None
             return _vrow_to_config(agent, vrow)
 
-    async def update(self, id: str, **changes: Any) -> AgentConfig:
+    async def update(
+        self, id: str, *, workspace_id: str | None = None, **changes: Any
+    ) -> AgentConfig:
         async with self._sessionmaker() as s, s.begin():
             agent = await s.get(AgentRow, id)
-            if agent is None:
+            if agent is None or (workspace_id is not None and agent.workspace_id != workspace_id):
                 raise StoreError(f"agent {id!r} not found")
-            current = await s.get(
-                AgentVersionRow, (id, agent.current_version)
-            )
+            current = await s.get(AgentVersionRow, (id, agent.current_version))
             if current is None:
                 raise StoreError(f"agent {id!r} current version missing")
             # Build merged content.
-            merged_tools = _normalise_tools(
-                changes.get("tools", current.tools)
-            )
-            merged_mcp = _normalise_mcp(
-                changes.get("mcp_servers", current.mcp_servers)
-            )
+            merged_tools = _normalise_tools(changes.get("tools", current.tools))
+            merged_mcp = _normalise_mcp(changes.get("mcp_servers", current.mcp_servers))
             merged_model = _normalise_model(changes.get("model", current.model))
             merged = {
                 "name": changes.get("name", current.name),
@@ -601,10 +650,12 @@ class SQLiteAgentStore(AgentStore):
             return _vrow_to_config(agent, new_row)
 
     async def list(
-        self, *, include_archived: bool = False
+        self, *, include_archived: bool = False, workspace_id: str | None = None
     ) -> builtins.list[AgentConfig]:
         async with self._sessionmaker() as s:
             stmt = select(AgentRow)
+            if workspace_id is not None:
+                stmt = stmt.where(AgentRow.workspace_id == workspace_id)
             if not include_archived:
                 stmt = stmt.where(AgentRow.archived_at.is_(None))
             agents = (await s.execute(stmt.order_by(AgentRow.created_at))).scalars().all()
@@ -615,24 +666,32 @@ class SQLiteAgentStore(AgentStore):
                     out.append(_vrow_to_config(a, v))
             return out
 
-    async def list_versions(self, id: str) -> builtins.list[AgentConfig]:
+    async def list_versions(
+        self, id: str, *, workspace_id: str | None = None
+    ) -> builtins.list[AgentConfig]:
         async with self._sessionmaker() as s:
             agent = await s.get(AgentRow, id)
             if agent is None:
                 return []
+            if workspace_id is not None and agent.workspace_id != workspace_id:
+                return []
             rows = (
-                await s.execute(
-                    select(AgentVersionRow)
-                    .where(AgentVersionRow.agent_id == id)
-                    .order_by(AgentVersionRow.version)
+                (
+                    await s.execute(
+                        select(AgentVersionRow)
+                        .where(AgentVersionRow.agent_id == id)
+                        .order_by(AgentVersionRow.version)
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             return [_vrow_to_config(agent, r) for r in rows]
 
-    async def archive(self, id: str) -> AgentConfig:
+    async def archive(self, id: str, *, workspace_id: str | None = None) -> AgentConfig:
         async with self._sessionmaker() as s, s.begin():
             agent = await s.get(AgentRow, id)
-            if agent is None:
+            if agent is None or (workspace_id is not None and agent.workspace_id != workspace_id):
                 raise StoreError(f"agent {id!r} not found")
             agent.archived_at = _utcnow()
             vrow = await s.get(AgentVersionRow, (id, agent.current_version))
@@ -644,6 +703,8 @@ class SQLiteAgentStore(AgentStore):
 def _vrow_to_config(agent: AgentRow, v: AgentVersionRow) -> AgentConfig:
     return _build_agent_config(
         agent_id=agent.id,
+        organization_id=agent.organization_id,
+        workspace_id=agent.workspace_id,
         version=v.version,
         name=v.name,
         model=ModelConfig.model_validate(v.model),
@@ -662,6 +723,8 @@ def _vrow_to_config(agent: AgentRow, v: AgentVersionRow) -> AgentConfig:
 def _build_agent_config(
     *,
     agent_id: str,
+    organization_id: str,
+    workspace_id: str,
     version: int,
     name: str,
     model: ModelConfig,
@@ -677,6 +740,8 @@ def _build_agent_config(
 ) -> AgentConfig:
     return AgentConfig(
         id=agent_id,
+        organization_id=organization_id,
+        workspace_id=workspace_id,
         name=name,
         model=model,
         system=system,
@@ -701,13 +766,22 @@ class SQLiteEnvironmentStore(EnvironmentStore):
     def __init__(self, sessionmaker: async_sessionmaker[AsyncSession]) -> None:
         self._sessionmaker = sessionmaker
 
-    async def create(self, name: str, config: dict[str, Any]) -> EnvironmentConfig:
+    async def create(
+        self,
+        name: str,
+        config: dict[str, Any],
+        *,
+        organization_id: str = DEFAULT_ORGANIZATION_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
+    ) -> EnvironmentConfig:
         env_id = _new_ulid()
         now = _utcnow()
         async with self._sessionmaker() as s, s.begin():
             s.add(
                 EnvironmentRow(
                     id=env_id,
+                    organization_id=organization_id,
+                    workspace_id=workspace_id,
                     name=name,
                     config=config,
                     created_at=now,
@@ -716,39 +790,45 @@ class SQLiteEnvironmentStore(EnvironmentStore):
             )
         return EnvironmentConfig(
             id=env_id,
+            organization_id=organization_id,
+            workspace_id=workspace_id,
             name=name,
             config=config,
             created_at=_aware(now),
             archived_at=None,
         )
 
-    async def get(self, id: str) -> EnvironmentConfig | None:
+    async def get(self, id: str, *, workspace_id: str | None = None) -> EnvironmentConfig | None:
         async with self._sessionmaker() as s:
             row = await s.get(EnvironmentRow, id)
+            if row is not None and workspace_id is not None and row.workspace_id != workspace_id:
+                return None
         return _row_to_env(row) if row else None
 
     async def list(
-        self, *, include_archived: bool = False
+        self, *, include_archived: bool = False, workspace_id: str | None = None
     ) -> builtins.list[EnvironmentConfig]:
         async with self._sessionmaker() as s:
             stmt = select(EnvironmentRow).order_by(EnvironmentRow.created_at)
+            if workspace_id is not None:
+                stmt = stmt.where(EnvironmentRow.workspace_id == workspace_id)
             if not include_archived:
                 stmt = stmt.where(EnvironmentRow.archived_at.is_(None))
             rows = (await s.execute(stmt)).scalars().all()
         return [_row_to_env(r) for r in rows]
 
-    async def archive(self, id: str) -> EnvironmentConfig:
+    async def archive(self, id: str, *, workspace_id: str | None = None) -> EnvironmentConfig:
         async with self._sessionmaker() as s, s.begin():
             row = await s.get(EnvironmentRow, id)
-            if row is None:
+            if row is None or (workspace_id is not None and row.workspace_id != workspace_id):
                 raise StoreError(f"environment {id!r} not found")
             row.archived_at = _utcnow()
             return _row_to_env(row)
 
-    async def delete(self, id: str) -> None:
+    async def delete(self, id: str, *, workspace_id: str | None = None) -> None:
         async with self._sessionmaker() as s, s.begin():
             row = await s.get(EnvironmentRow, id)
-            if row is None:
+            if row is None or (workspace_id is not None and row.workspace_id != workspace_id):
                 raise StoreError(f"environment {id!r} not found")
             await s.delete(row)
 
@@ -756,6 +836,8 @@ class SQLiteEnvironmentStore(EnvironmentStore):
 def _row_to_env(row: EnvironmentRow) -> EnvironmentConfig:
     return EnvironmentConfig(
         id=row.id,
+        organization_id=row.organization_id,
+        workspace_id=row.workspace_id,
         name=row.name,
         config=dict(row.config),
         created_at=_aware(row.created_at),
@@ -778,6 +860,8 @@ class SQLiteSessionStore(SessionStore):
         agent_version: int,
         environment_id: str | None = None,
         metadata: dict[str, str] | None = None,
+        organization_id: str = DEFAULT_ORGANIZATION_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> Session:
         sid = _new_ulid()
         now = _utcnow()
@@ -785,6 +869,8 @@ class SQLiteSessionStore(SessionStore):
             s.add(
                 SessionRow(
                     id=sid,
+                    organization_id=organization_id,
+                    workspace_id=workspace_id,
                     agent_id=agent_id,
                     agent_version=agent_version,
                     environment_id=environment_id,
@@ -798,6 +884,8 @@ class SQLiteSessionStore(SessionStore):
             )
         return Session(
             id=sid,
+            organization_id=organization_id,
+            workspace_id=workspace_id,
             agent_id=agent_id,
             agent_version=agent_version,
             environment_id=environment_id,
@@ -809,25 +897,34 @@ class SQLiteSessionStore(SessionStore):
             updated_at=_aware(now),
         )
 
-    async def get(self, id: str) -> Session | None:
+    async def get(self, id: str, *, workspace_id: str | None = None) -> Session | None:
         async with self._sessionmaker() as s:
             row = await s.get(SessionRow, id)
+            if row is not None and workspace_id is not None and row.workspace_id != workspace_id:
+                return None
         return _row_to_session(row) if row else None
 
     async def list(
-        self, *, status: SessionStatus | None = None
+        self,
+        *,
+        status: SessionStatus | None = None,
+        workspace_id: str | None = None,
     ) -> builtins.list[Session]:
         async with self._sessionmaker() as s:
             stmt = select(SessionRow).order_by(SessionRow.created_at)
+            if workspace_id is not None:
+                stmt = stmt.where(SessionRow.workspace_id == workspace_id)
             if status is not None:
                 stmt = stmt.where(SessionRow.status == status)
             rows = (await s.execute(stmt)).scalars().all()
         return [_row_to_session(r) for r in rows]
 
-    async def update_status(self, id: str, status: SessionStatus) -> Session:
+    async def update_status(
+        self, id: str, status: SessionStatus, *, workspace_id: str | None = None
+    ) -> Session:
         async with self._sessionmaker() as s, s.begin():
             row = await s.get(SessionRow, id)
-            if row is None:
+            if row is None or (workspace_id is not None and row.workspace_id != workspace_id):
                 raise StoreError(f"session {id!r} not found")
             row.status = status
             row.updated_at = _utcnow()
@@ -838,10 +935,11 @@ class SQLiteSessionStore(SessionStore):
         id: str,
         container_id: str | None,
         workspace_path: str | None = None,
+        workspace_id: str | None = None,
     ) -> Session:
         async with self._sessionmaker() as s, s.begin():
             row = await s.get(SessionRow, id)
-            if row is None:
+            if row is None or (workspace_id is not None and row.workspace_id != workspace_id):
                 raise StoreError(f"session {id!r} not found")
             row.container_id = container_id
             if workspace_path is not None:
@@ -849,10 +947,10 @@ class SQLiteSessionStore(SessionStore):
             row.updated_at = _utcnow()
             return _row_to_session(row)
 
-    async def delete(self, id: str) -> None:
+    async def delete(self, id: str, *, workspace_id: str | None = None) -> None:
         async with self._sessionmaker() as s, s.begin():
             row = await s.get(SessionRow, id)
-            if row is None:
+            if row is None or (workspace_id is not None and row.workspace_id != workspace_id):
                 raise StoreError(f"session {id!r} not found")
             await s.delete(row)
 
@@ -860,6 +958,8 @@ class SQLiteSessionStore(SessionStore):
 def _row_to_session(row: SessionRow) -> Session:
     return Session(
         id=row.id,
+        organization_id=row.organization_id,
+        workspace_id=row.workspace_id,
         agent_id=row.agent_id,
         agent_version=row.agent_version,
         environment_id=row.environment_id,
@@ -870,5 +970,3 @@ def _row_to_session(row: SessionRow) -> Session:
         created_at=_aware(row.created_at),
         updated_at=_aware(row.updated_at),
     )
-
-

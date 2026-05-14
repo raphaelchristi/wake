@@ -1,4 +1,4 @@
-# ruff: noqa: B008
+# ruff: noqa: B008, TC001
 """Metrics routes — feeds the dashboard ``/metrics`` page.
 
 * ``GET /v1/metrics/summary?window=1h|24h|7d|30d`` — JSON aggregate
@@ -17,7 +17,7 @@ currently ``running``.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 import structlog
@@ -26,10 +26,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from wake.api.dependencies import (
     get_event_log,
     get_session_store,
+    get_tenant_context,
 )
 from wake.api.metrics_aggregation import build_summary, parse_window
 from wake.core.event_log import EventLog
 from wake.store.base import SessionStore
+from wake.tenancy import TenantContext
 from wake.types import Event, Session
 
 logger = structlog.get_logger(__name__)
@@ -51,6 +53,7 @@ async def metrics_summary(
     window: WindowCode = Query("24h", description="Aggregation window"),
     session_store: SessionStore = Depends(get_session_store),
     event_log: EventLog = Depends(get_event_log),
+    tenant: TenantContext = Depends(get_tenant_context),
 ) -> dict[str, Any]:
     """Return aggregated metrics over the given window.
 
@@ -62,20 +65,20 @@ async def metrics_summary(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     cutoff = now - window_delta
 
     # Gather events for every session that may overlap the window. We
     # over-fetch (whole session) on purpose because event_log.get is
     # session-scoped; build_summary filters by ``cutoff`` per event.
-    sessions = await session_store.list()
+    sessions = await session_store.list(workspace_id=tenant.workspace_id)
     events: list[Event] = []
     for sess in sessions:
         if sess.created_at < cutoff and sess.status == "terminated":
             # Skip sessions that ended before the window — they cannot
             # contribute any events inside the cutoff.
             continue
-        events.extend(await event_log.get(sess.id))
+        events.extend(await event_log.get(sess.id, workspace_id=tenant.workspace_id))
 
     # Worker liveness — derived from session meta heartbeats if any.
     workers_alive = _count_alive_workers(sessions, now=now)
@@ -98,6 +101,7 @@ async def metrics_summary(
 @router.get("/workers")
 async def list_workers(
     session_store: SessionStore = Depends(get_session_store),
+    tenant: TenantContext = Depends(get_tenant_context),
 ) -> dict[str, list[dict[str, Any]]]:
     """List workers with heartbeat status.
 
@@ -121,8 +125,8 @@ async def list_workers(
             ]
         }
     """
-    now = datetime.now(timezone.utc)
-    sessions = await session_store.list()
+    now = datetime.now(UTC)
+    sessions = await session_store.list(workspace_id=tenant.workspace_id)
 
     # Group sessions by worker_id discovered in meta.
     grouped: dict[str, dict[str, Any]] = {}
@@ -208,7 +212,7 @@ def _extract_heartbeat(session: Session) -> tuple[str | None, datetime | None]:
         try:
             at_dt = datetime.fromisoformat(at_raw)
             if at_dt.tzinfo is None:
-                at_dt = at_dt.replace(tzinfo=timezone.utc)
+                at_dt = at_dt.replace(tzinfo=UTC)
         except ValueError:
             at_dt = None
     return (str(worker) if worker else None), at_dt

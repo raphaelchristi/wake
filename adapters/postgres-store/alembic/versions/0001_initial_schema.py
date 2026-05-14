@@ -59,6 +59,8 @@ def upgrade() -> None:
         """
         CREATE TABLE IF NOT EXISTS agents (
             id              VARCHAR(26) PRIMARY KEY,
+            organization_id TEXT NOT NULL DEFAULT 'default',
+            workspace_id    TEXT NOT NULL DEFAULT 'default',
             name            TEXT NOT NULL,
             current_version INTEGER NOT NULL DEFAULT 1,
             created_at      TIMESTAMPTZ NOT NULL,
@@ -86,6 +88,12 @@ def upgrade() -> None:
         )
         """
     )
+    op.execute(
+        """
+        CREATE INDEX IF NOT EXISTS ix_agents_workspace
+            ON agents (workspace_id)
+        """
+    )
 
     # ------------------------------------------------------------------
     # environments
@@ -94,11 +102,19 @@ def upgrade() -> None:
         """
         CREATE TABLE IF NOT EXISTS environments (
             id          VARCHAR(26) PRIMARY KEY,
+            organization_id TEXT NOT NULL DEFAULT 'default',
+            workspace_id    TEXT NOT NULL DEFAULT 'default',
             name        TEXT NOT NULL,
             config      JSONB NOT NULL DEFAULT '{}'::jsonb,
             created_at  TIMESTAMPTZ NOT NULL,
             archived_at TIMESTAMPTZ
         )
+        """
+    )
+    op.execute(
+        """
+        CREATE INDEX IF NOT EXISTS ix_environments_workspace
+            ON environments (workspace_id)
         """
     )
 
@@ -109,6 +125,8 @@ def upgrade() -> None:
         """
         CREATE TABLE IF NOT EXISTS sessions (
             id              VARCHAR(26) PRIMARY KEY,
+            organization_id TEXT NOT NULL DEFAULT 'default',
+            workspace_id    TEXT NOT NULL DEFAULT 'default',
             agent_id        VARCHAR(26) NOT NULL,
             agent_version   INTEGER NOT NULL,
             environment_id  VARCHAR(26),
@@ -127,6 +145,12 @@ def upgrade() -> None:
             ON sessions (status)
         """
     )
+    op.execute(
+        """
+        CREATE INDEX IF NOT EXISTS ix_sessions_workspace_status
+            ON sessions (workspace_id, status)
+        """
+    )
 
     # ------------------------------------------------------------------
     # events (HASH-partitioned)
@@ -137,6 +161,8 @@ def upgrade() -> None:
         """
         CREATE TABLE IF NOT EXISTS events (
             id          VARCHAR(26) NOT NULL,
+            organization_id TEXT NOT NULL DEFAULT 'default',
+            workspace_id    TEXT NOT NULL DEFAULT 'default',
             session_id  VARCHAR(26) NOT NULL,
             seq         INTEGER NOT NULL,
             type        TEXT NOT NULL,
@@ -163,6 +189,12 @@ def upgrade() -> None:
             f"""
             CREATE INDEX IF NOT EXISTS ix_events_p_{i:02d}_session_seq
             ON events_p_{i:02d} (session_id, seq)
+            """
+        )
+        op.execute(
+            f"""
+            CREATE INDEX IF NOT EXISTS ix_events_p_{i:02d}_workspace_session_seq
+            ON events_p_{i:02d} (workspace_id, session_id, seq)
             """
         )
         op.execute(

@@ -19,6 +19,7 @@ from typing import Any
 import structlog
 
 from wake.store.base import AgentStore
+from wake.tenancy import DEFAULT_ORGANIZATION_ID, DEFAULT_WORKSPACE_ID
 from wake.types import AgentConfig, McpServerConfig, ModelConfig, ToolConfig
 
 log = structlog.get_logger(__name__)
@@ -41,6 +42,8 @@ class AgentService:
         skills: list[dict[str, Any]] | None = None,
         description: str | None = None,
         metadata: dict[str, str] | None = None,
+        organization_id: str = DEFAULT_ORGANIZATION_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> AgentConfig:
         """Create an agent. Accepts model as object, dict, or model-id string."""
         model_obj = _coerce_model(model)
@@ -53,28 +56,36 @@ class AgentService:
             skills=list(skills or []),
             description=description,
             metadata=dict(metadata or {}),
+            organization_id=organization_id,
+            workspace_id=workspace_id,
         )
         log.info("agent.service.created", agent_id=agent.id, name=name)
         return agent
 
-    async def get(self, id: str, version: int | None = None) -> AgentConfig | None:
-        return await self._store.get(id, version=version)
+    async def get(
+        self, id: str, version: int | None = None, *, workspace_id: str | None = None
+    ) -> AgentConfig | None:
+        return await self._store.get(id, version=version, workspace_id=workspace_id)
 
-    async def update(self, id: str, **changes: Any) -> AgentConfig:
+    async def update(
+        self, id: str, *, workspace_id: str | None = None, **changes: Any
+    ) -> AgentConfig:
         if "model" in changes:
             changes["model"] = _coerce_model(changes["model"])
-        return await self._store.update(id, **changes)
+        return await self._store.update(id, workspace_id=workspace_id, **changes)
 
     async def list(
-        self, *, include_archived: bool = False
+        self, *, include_archived: bool = False, workspace_id: str | None = None
     ) -> builtins.list[AgentConfig]:
-        return await self._store.list(include_archived=include_archived)
+        return await self._store.list(include_archived=include_archived, workspace_id=workspace_id)
 
-    async def list_versions(self, id: str) -> builtins.list[AgentConfig]:
-        return await self._store.list_versions(id)
+    async def list_versions(
+        self, id: str, *, workspace_id: str | None = None
+    ) -> builtins.list[AgentConfig]:
+        return await self._store.list_versions(id, workspace_id=workspace_id)
 
-    async def archive(self, id: str) -> AgentConfig:
-        return await self._store.archive(id)
+    async def archive(self, id: str, *, workspace_id: str | None = None) -> AgentConfig:
+        return await self._store.archive(id, workspace_id=workspace_id)
 
 
 def _coerce_model(model: ModelConfig | dict[str, Any] | str) -> ModelConfig:
