@@ -392,6 +392,30 @@ environment:
 
 ---
 
+## RBAC (Phase 6)
+
+Wake adiciona uma camada RBAC fina por cima da fronteira de tenancy.
+Três roles fixas — `admin`, `operator`, `viewer` — bound a
+`(user_id, workspace_id)`. Gates ficam na assinatura das rotas via
+`Depends(require_role(...))`; handlers nunca fazem inline-check.
+
+Habilitação via env: `WAKE_RBAC_ENABLED=true`. Default é `false`
+(zero-friction dev mode — `get_current_user` devolve o sentinel
+`User.system()` carregando todas as roles, e nenhuma rota é gateada).
+
+| Role     | Escopo                                                      |
+|----------|-------------------------------------------------------------|
+| admin    | CRUD completo + gerenciar users + rotacionar credenciais    |
+| operator | CRUD em agents/environments/sessions/events; lê vault audit |
+| viewer   | Read-only (sessions, events, métricas, agents)              |
+
+Identidade entra via `X-Wake-User-Id` (gateway/IdP injeta após auth
+própria). Cross-workspace continua sendo `404` (opacidade da
+tenancy); cross-RBAC sem permissão é `403`. Doc completa em
+[RBAC.md](./RBAC.md).
+
+---
+
 ## Multi-tenant e concorrência
 
 Workspace = fronteira de isolamento de dados. `organization_id` agrupa
