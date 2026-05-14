@@ -38,8 +38,8 @@ import os
 
 from alembic import op
 
-revision = "0004_idempotency"
-down_revision = "0003_rbac"
+revision = "0005_idempotency"
+down_revision = "0004_system_user_constraint"
 branch_labels = None
 depends_on = None
 
