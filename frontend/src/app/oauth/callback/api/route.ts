@@ -115,21 +115,20 @@ export async function POST(req: NextRequest) {
     "X-Wake-Organization-Id": tenant.organizationId,
     "X-Wake-Workspace-Id": tenant.workspaceId,
   };
-  // Allow opt-in server-side auth: operators can set WAKE_API_KEY on the
-  // Next.js process so the callback proxy authenticates without leaking
-  // the key into the browser.
+  // Auth SOMENTE server-side: operadores configuram `WAKE_API_KEY` no
+  // processo Next.js. Qualquer `x-wake-api-key` enviado pelo cliente é
+  // explicitamente descartado — o callback OAuth é uma rota security-
+  // sensitive e permitir que o browser escolha a credencial backend abre
+  // header spoofing de auth.
   const apiKey = process.env.WAKE_API_KEY;
   if (apiKey) headers["X-Wake-API-Key"] = apiKey;
 
-  // Forward the incoming cookie / auth header if the shell slice ends up
-  // putting the API key into a cookie. Today auth.ts stores it in
-  // localStorage so this is a no-op; harmless on the empty path.
-  const incomingAuth = req.headers.get("x-wake-api-key");
-  if (incomingAuth) headers["X-Wake-API-Key"] = incomingAuth;
-
-  // Forward optional user id (slice A — RBAC). No-op quando ausente.
-  const userId = req.headers.get("x-wake-user-id");
-  if (userId) headers["X-Wake-User-Id"] = userId;
+  // `X-Wake-User-Id` NUNCA é forward do request do cliente. Quando RBAC=ON
+  // o backend usa esse header como o principal autorizado; aceitar valor
+  // browser-supplied equivale a deixar qualquer um se passar por outro user.
+  // Identidade RBAC futura virá de uma sessão server-side autenticada do
+  // frontend; até lá omitimos o header (backend cai em fail-closed com
+  // RBAC=ON; no-op com RBAC=OFF).
 
   const started = Date.now();
   // Never log raw `code` or `state` — they are short-lived credentials.
