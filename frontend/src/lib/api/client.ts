@@ -3,6 +3,8 @@
  *
  * Responsibilities:
  *   - Inject the `X-Wake-API-Key` header from local auth state.
+ *   - Inject `X-Wake-Organization-Id` + `X-Wake-Workspace-Id` (tenancy)
+ *     resolved via `getTenantScope()` ou override no construtor.
  *   - Surface non-2xx responses as `WakeApiError` with a parsed body.
  *   - Provide typed convenience methods for the routes the dashboard needs.
  *
@@ -10,6 +12,7 @@
  * only does the one HTTP round-trip.
  */
 import { getApiKey } from "@/lib/auth";
+import { getTenantScope, type TenantScope } from "@/lib/tenant";
 
 import type {
   AgentList,
@@ -75,17 +78,26 @@ export interface ClientOptions {
   baseUrl?: string;
   apiKey?: string | null;
   fetchImpl?: typeof fetch;
+  /**
+   * Override do scope tenant para SSR / testes. Quando omitido, o client
+   * resolve via `getTenantScope()` em cada request (sempre frescos do
+   * localStorage — o switch de workspace pela UI passa a valer no próximo
+   * fetch sem precisar recriar o client).
+   */
+  tenantScope?: TenantScope | null;
 }
 
 export class WakeApiClient {
   private readonly baseUrl: string;
   private readonly apiKeyOverride: string | null | undefined;
   private readonly fetchImpl: typeof fetch;
+  private readonly tenantScopeOverride: TenantScope | null | undefined;
 
   constructor(options: ClientOptions = {}) {
     this.baseUrl = (options.baseUrl ?? DEFAULT_BASE).replace(/\/$/, "");
     this.apiKeyOverride = options.apiKey;
     this.fetchImpl = options.fetchImpl ?? fetch.bind(globalThis);
+    this.tenantScopeOverride = options.tenantScope;
   }
 
   private apiKey(): string | null {
@@ -93,10 +105,20 @@ export class WakeApiClient {
     return getApiKey();
   }
 
+  private tenant(): TenantScope {
+    if (this.tenantScopeOverride !== undefined && this.tenantScopeOverride !== null) {
+      return this.tenantScopeOverride;
+    }
+    return getTenantScope();
+  }
+
   private headers(extra?: HeadersInit): Headers {
     const h = new Headers(extra);
     const key = this.apiKey();
     if (key) h.set("X-Wake-API-Key", key);
+    const scope = this.tenant();
+    h.set("X-Wake-Organization-Id", scope.organizationId);
+    h.set("X-Wake-Workspace-Id", scope.workspaceId);
     if (!h.has("Accept")) h.set("Accept", "application/json");
     return h;
   }

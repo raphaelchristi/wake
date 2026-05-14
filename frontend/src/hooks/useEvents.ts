@@ -10,14 +10,16 @@
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { request } from "@/lib/api/client";
 import type { WakeEvent } from "@/lib/replay/types";
+import { useTenantScope } from "@/hooks/useTenantScope";
 
 interface EventListResponse {
   data: WakeEvent[];
 }
 
 export function useEvents(sessionId: string | undefined): UseQueryResult<WakeEvent[]> {
+  const { workspaceId } = useTenantScope();
   return useQuery({
-    queryKey: ["events", sessionId],
+    queryKey: ["events", workspaceId, sessionId],
     enabled: Boolean(sessionId),
     queryFn: async () => {
       const resp = await request<EventListResponse>(

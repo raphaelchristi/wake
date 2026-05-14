@@ -11,13 +11,15 @@
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { request } from "@/lib/api/client";
 import type { StateAtResponse } from "@/lib/replay/types";
+import { useTenantScope } from "@/hooks/useTenantScope";
 
 export function useStateAt(
   sessionId: string | undefined,
   seq: number | undefined,
 ): UseQueryResult<StateAtResponse> {
+  const { workspaceId } = useTenantScope();
   return useQuery({
-    queryKey: ["state-at", sessionId, seq],
+    queryKey: ["state-at", workspaceId, sessionId, seq],
     enabled: Boolean(sessionId) && typeof seq === "number" && seq >= 0,
     queryFn: () =>
       request<StateAtResponse>(`/v1/sessions/${sessionId}/state-at/${seq}`),

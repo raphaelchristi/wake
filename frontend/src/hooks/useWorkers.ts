@@ -5,6 +5,7 @@ import * as React from "react";
 import { getClient } from "@/lib/api/client";
 import type { WakeApiClient } from "@/lib/api/client";
 import type { Worker, WorkerList } from "@/lib/api/metrics-types";
+import { useTenantScope } from "@/hooks/useTenantScope";
 
 export interface UseWorkersOptions {
   autoRefreshMs?: number | null;
@@ -23,6 +24,8 @@ export function useWorkers(options: UseWorkersOptions = {}): UseWorkersResult {
   const autoRefreshMs =
     options.autoRefreshMs === undefined ? 15_000 : options.autoRefreshMs;
   const client = options.client ?? getClient();
+  // Tenancy: dispara re-load quando o workspace muda.
+  const { workspaceId } = useTenantScope();
 
   const [workers, setWorkers] = React.useState<Worker[]>([]);
   const [isLoading, setIsLoading] = React.useState(true);
@@ -52,7 +55,8 @@ export function useWorkers(options: UseWorkersOptions = {}): UseWorkersResult {
         setIsFetching(false);
       }
     }
-  }, [client]);
+    void workspaceId;
+  }, [client, workspaceId]);
 
   React.useEffect(() => {
     void load();

@@ -8,6 +8,7 @@ import type {
   MetricsSummary,
   MetricsWindow,
 } from "@/lib/api/metrics-types";
+import { useTenantScope } from "@/hooks/useTenantScope";
 
 export type UseMetricsState =
   | { status: "idle"; data: null; error: null }
@@ -35,6 +36,10 @@ export function useMetrics(
   const window = options.window ?? "24h";
   const autoRefreshMs = options.autoRefreshMs === undefined ? 30_000 : options.autoRefreshMs;
   const client = options.client ?? getClient();
+  // Tenancy: a workspaceId reativa entra como dep do `load` para que
+  // mudar de workspace dispare um novo fetch (o client já injeta o header
+  // novo via `getTenantScope()`). Equivalente lógico a uma queryKey.
+  const { workspaceId } = useTenantScope();
 
   const [state, setState] = React.useState<UseMetricsState>({
     status: "idle",
@@ -69,7 +74,10 @@ export function useMetrics(
     } finally {
       if (ticket === lastTriggerRef.current) setIsFetching(false);
     }
-  }, [client, window]);
+    // workspaceId é referenciada apenas para acionar re-fetch em troca de
+    // workspace; o valor real entra no header via client.headers().
+    void workspaceId;
+  }, [client, window, workspaceId]);
 
   React.useEffect(() => {
     void load();
