@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { WakeApiClient, WakeApiError } from "@/lib/api/client";
 import { setApiKey } from "@/lib/auth";
+import { setTenantScope } from "@/lib/tenant";
 
 function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
   return new Response(JSON.stringify(body), {
@@ -9,6 +10,11 @@ function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
     headers: { "content-type": "application/json" },
     ...init,
   });
+}
+
+function headersFromCall(call: Parameters<typeof fetch>[1]): Headers {
+  const init = call as RequestInit | undefined;
+  return (init?.headers ?? new Headers()) as Headers;
 }
 
 describe("WakeApiClient", () => {
@@ -27,6 +33,57 @@ describe("WakeApiClient", () => {
     const init = call[1] as RequestInit | undefined;
     const headers = (init?.headers ?? new Headers()) as Headers;
     expect(headers.get("X-Wake-API-Key")).toBe("wake_test_abc");
+  });
+
+  it("sends tenancy headers with default/default when nothing is persisted", async () => {
+    const fetchSpy = vi.fn<typeof fetch>(async () => jsonResponse({ data: [] }));
+    const client = new WakeApiClient({ fetchImpl: fetchSpy });
+    await client.listSessions();
+    const call = fetchSpy.mock.calls[0];
+    if (!call) throw new Error("expected fetch to be called");
+    const headers = headersFromCall(call[1]);
+    expect(headers.get("X-Wake-Organization-Id")).toBe("default");
+    expect(headers.get("X-Wake-Workspace-Id")).toBe("default");
+  });
+
+  it("sends tenancy headers using the persisted scope", async () => {
+    setTenantScope({ organizationId: "acme", workspaceId: "prod" });
+    const fetchSpy = vi.fn<typeof fetch>(async () => jsonResponse({ data: [] }));
+    const client = new WakeApiClient({ fetchImpl: fetchSpy });
+    await client.listSessions();
+    const call = fetchSpy.mock.calls[0];
+    if (!call) throw new Error("expected fetch to be called");
+    const headers = headersFromCall(call[1]);
+    expect(headers.get("X-Wake-Organization-Id")).toBe("acme");
+    expect(headers.get("X-Wake-Workspace-Id")).toBe("prod");
+  });
+
+  it("supports tenantScope override (for SSR / testes)", async () => {
+    setTenantScope({ organizationId: "acme", workspaceId: "prod" });
+    const fetchSpy = vi.fn<typeof fetch>(async () => jsonResponse({ data: [] }));
+    const client = new WakeApiClient({
+      fetchImpl: fetchSpy,
+      tenantScope: { organizationId: "override", workspaceId: "scope" },
+    });
+    await client.listSessions();
+    const call = fetchSpy.mock.calls[0];
+    if (!call) throw new Error("expected fetch to be called");
+    const headers = headersFromCall(call[1]);
+    expect(headers.get("X-Wake-Organization-Id")).toBe("override");
+    expect(headers.get("X-Wake-Workspace-Id")).toBe("scope");
+  });
+
+  it("re-reads tenant scope per request (no cached snapshot)", async () => {
+    const fetchSpy = vi.fn<typeof fetch>(async () => jsonResponse({ data: [] }));
+    const client = new WakeApiClient({ fetchImpl: fetchSpy });
+    await client.listSessions();
+    setTenantScope({ organizationId: "next", workspaceId: "tenant" });
+    await client.listSessions();
+    const calls = fetchSpy.mock.calls;
+    if (calls.length < 2) throw new Error("expected two fetch calls");
+    expect(headersFromCall(calls[0]?.[1]).get("X-Wake-Organization-Id")).toBe("default");
+    expect(headersFromCall(calls[1]?.[1]).get("X-Wake-Organization-Id")).toBe("next");
+    expect(headersFromCall(calls[1]?.[1]).get("X-Wake-Workspace-Id")).toBe("tenant");
   });
 
   it("omits the auth header when no key is set", async () => {
