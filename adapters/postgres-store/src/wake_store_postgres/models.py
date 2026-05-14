@@ -147,6 +147,38 @@ class EventRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class UserRow(Base):
+    """Workspace-scoped user catalog.
+
+    Composite primary key ``(workspace_id, id)`` so the same user id
+    can coexist as independent principals across workspaces.
+    """
+
+    __tablename__ = "users"
+
+    workspace_id: Mapped[str] = mapped_column(String, primary_key=True)
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    organization_id: Mapped[str] = mapped_column(
+        String, nullable=False, default=DEFAULT_ORGANIZATION_ID
+    )
+    display_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class UserRoleRow(Base):
+    """Many-to-many ``(workspace, user, role)`` binding table."""
+
+    __tablename__ = "user_roles"
+
+    workspace_id: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[str] = mapped_column(String, primary_key=True)
+    role: Mapped[str] = mapped_column(String, primary_key=True)
+    organization_id: Mapped[str] = mapped_column(
+        String, nullable=False, default=DEFAULT_ORGANIZATION_ID
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 __all__ = [
     "Base",
     "AgentRow",
@@ -154,4 +186,6 @@ __all__ = [
     "EnvironmentRow",
     "SessionRow",
     "EventRow",
+    "UserRow",
+    "UserRoleRow",
 ]

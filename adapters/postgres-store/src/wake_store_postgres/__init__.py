@@ -18,6 +18,7 @@ from wake_store_postgres.locks import (
 )
 from wake_store_postgres.sessions import PostgresSessionStore
 from wake_store_postgres.store import PostgresStore, create_from_dsn
+from wake_store_postgres.users import PostgresUserStore
 
 __all__ = [
     "PostgresStore",
@@ -25,6 +26,7 @@ __all__ = [
     "PostgresEnvironmentStore",
     "PostgresEventStore",
     "PostgresSessionStore",
+    "PostgresUserStore",
     "WorkerHeartbeat",
     "acquire_session_lock",
     "release_session_lock",
