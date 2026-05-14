@@ -22,6 +22,8 @@ import httpx
 import structlog
 
 from wake_vault_infisical.base import (
+    DEFAULT_ORGANIZATION_ID,
+    DEFAULT_WORKSPACE_ID,
     CredentialMetadata,
     ProviderName,
     VaultAdapter,
@@ -52,40 +54,133 @@ class _InMemoryBackend:
         self._store: dict[str, dict[str, Any]] = {}
         self._proxy_tokens: dict[str, str] = {}  # proxy_token -> vault_id
 
-    def put(self, vault_id: str, name: str, provider: str, value: str,
-            scopes: list[str], metadata: dict[str, Any]) -> None:
+    def put(
+        self,
+        vault_id: str,
+        name: str,
+        provider: str,
+        value: str,
+        scopes: list[str],
+        metadata: dict[str, Any],
+        *,
+        organization_id: str = DEFAULT_ORGANIZATION_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
+    ) -> None:
         self._store[vault_id] = {
             "name": name,
             "provider": provider,
             "value": value,
             "scopes": scopes,
             "metadata": metadata,
+            "organization_id": organization_id,
+            "workspace_id": workspace_id,
             "created_at": datetime.now(UTC),
         }
 
-    def get_value(self, vault_id: str) -> str:
+    def _belongs(
+        self,
+        vault_id: str,
+        *,
+        organization_id: str | None,
+        workspace_id: str | None,
+    ) -> bool:
+        """Return True iff ``vault_id`` exists AND matches the tenant scope.
+
+        ``None`` skips the corresponding check — used by internal proxy
+        resolution that runs after a session-level vault_id lookup.
+        """
         if vault_id not in self._store:
+            return False
+        entry = self._store[vault_id]
+        if (
+            workspace_id is not None
+            and str(entry.get("workspace_id", DEFAULT_WORKSPACE_ID)) != workspace_id
+        ):
+            return False
+        return not (
+            organization_id is not None
+            and str(entry.get("organization_id", DEFAULT_ORGANIZATION_ID))
+            != organization_id
+        )
+
+    def get_value(
+        self,
+        vault_id: str,
+        *,
+        organization_id: str | None = None,
+        workspace_id: str | None = None,
+    ) -> str:
+        if not self._belongs(
+            vault_id, organization_id=organization_id, workspace_id=workspace_id
+        ):
             raise VaultNotFoundError(f"vault entry {vault_id!r} not found")
         return str(self._store[vault_id]["value"])
 
-    def get_meta(self, vault_id: str) -> dict[str, Any]:
-        if vault_id not in self._store:
+    def get_meta(
+        self,
+        vault_id: str,
+        *,
+        organization_id: str | None = None,
+        workspace_id: str | None = None,
+    ) -> dict[str, Any]:
+        if not self._belongs(
+            vault_id, organization_id=organization_id, workspace_id=workspace_id
+        ):
             raise VaultNotFoundError(f"vault entry {vault_id!r} not found")
         return self._store[vault_id]
 
-    def list_all(self) -> list[tuple[str, dict[str, Any]]]:
-        return [(vid, dict(meta)) for vid, meta in self._store.items()]
+    def list_all(
+        self,
+        *,
+        organization_id: str | None = None,
+        workspace_id: str | None = None,
+    ) -> list[tuple[str, dict[str, Any]]]:
+        out: list[tuple[str, dict[str, Any]]] = []
+        for vid, meta in self._store.items():
+            if (
+                workspace_id is not None
+                and str(meta.get("workspace_id", DEFAULT_WORKSPACE_ID)) != workspace_id
+            ):
+                continue
+            if (
+                organization_id is not None
+                and str(meta.get("organization_id", DEFAULT_ORGANIZATION_ID))
+                != organization_id
+            ):
+                continue
+            out.append((vid, dict(meta)))
+        return out
 
-    def revoke(self, vault_id: str) -> None:
-        # Idempotent: silently drop unknown ids.
+    def revoke(
+        self,
+        vault_id: str,
+        *,
+        organization_id: str | None = None,
+        workspace_id: str | None = None,
+    ) -> None:
+        # Idempotent: silently drop matching entry; cross-tenant
+        # revokes are also silent (matches PHASE-6-CONTRACT.md tenant
+        # opacity semantics).
+        if not self._belongs(
+            vault_id, organization_id=organization_id, workspace_id=workspace_id
+        ):
+            return
         self._store.pop(vault_id, None)
         # Also revoke any outstanding proxy tokens for this vault_id.
         self._proxy_tokens = {
             tok: vid for tok, vid in self._proxy_tokens.items() if vid != vault_id
         }
 
-    def issue_proxy_token(self, vault_id: str) -> str:
-        if vault_id not in self._store:
+    def issue_proxy_token(
+        self,
+        vault_id: str,
+        *,
+        organization_id: str | None = None,
+        workspace_id: str | None = None,
+    ) -> str:
+        if not self._belongs(
+            vault_id, organization_id=organization_id, workspace_id=workspace_id
+        ):
             raise VaultNotFoundError(f"vault entry {vault_id!r} not found")
         token = f"wkv_{uuid4().hex}"
         self._proxy_tokens[token] = vault_id
@@ -161,6 +256,8 @@ class InfisicalVault(VaultAdapter):
         *,
         scopes: list[str] | None = None,
         metadata: dict[str, Any] | None = None,
+        organization_id: str = DEFAULT_ORGANIZATION_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> CredentialMetadata:
         vault_id = f"vault_{uuid4().hex[:16]}"
         scopes = scopes or []
@@ -174,11 +271,22 @@ class InfisicalVault(VaultAdapter):
             provider=provider,
             has_value=bool(value),
             scopes=scopes,
+            organization_id=organization_id,
+            workspace_id=workspace_id,
         )
 
         if self._mode == "memory":
             assert self._memory is not None
-            self._memory.put(vault_id, name, str(provider), value, scopes, metadata)
+            self._memory.put(
+                vault_id,
+                name,
+                str(provider),
+                value,
+                scopes,
+                metadata,
+                organization_id=organization_id,
+                workspace_id=workspace_id,
+            )
         else:
             assert self._http is not None
             try:
@@ -191,6 +299,8 @@ class InfisicalVault(VaultAdapter):
                             "vault_id": vault_id,
                             "provider": str(provider),
                             "scopes": scopes,
+                            "organization_id": organization_id,
+                            "workspace_id": workspace_id,
                             **metadata,
                         },
                     },
@@ -206,23 +316,47 @@ class InfisicalVault(VaultAdapter):
             scopes=scopes,
             created_at=datetime.now(UTC),
             metadata=metadata,
+            organization_id=organization_id,
+            workspace_id=workspace_id,
         )
 
-    async def get_proxy_token(self, vault_id: str, session_id: str) -> str:
+    async def get_proxy_token(
+        self,
+        vault_id: str,
+        session_id: str,
+        *,
+        organization_id: str = DEFAULT_ORGANIZATION_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
+    ) -> str:
         # Proxy tokens are opaque — agent code that "leaks" one in a
         # tool_result event leaks nothing useful. The HTTPS proxy swaps
         # the token for the real credential at egress time.
-        logger.info("vault_proxy_token_issued", vault_id=vault_id, session_id=session_id)
+        logger.info(
+            "vault_proxy_token_issued",
+            vault_id=vault_id,
+            session_id=session_id,
+            organization_id=organization_id,
+            workspace_id=workspace_id,
+        )
 
         if self._mode == "memory":
             assert self._memory is not None
-            return self._memory.issue_proxy_token(vault_id)
+            return self._memory.issue_proxy_token(
+                vault_id,
+                organization_id=organization_id,
+                workspace_id=workspace_id,
+            )
 
         assert self._http is not None
         try:
             resp = await self._http.post(
                 "/api/v3/proxy-tokens",
-                json={"vault_id": vault_id, "session_id": session_id},
+                json={
+                    "vault_id": vault_id,
+                    "session_id": session_id,
+                    "organization_id": organization_id,
+                    "workspace_id": workspace_id,
+                },
             )
             resp.raise_for_status()
             data = resp.json()
@@ -233,11 +367,19 @@ class InfisicalVault(VaultAdapter):
         except httpx.HTTPError as exc:
             raise VaultError(f"infisical proxy_token failed: {exc}") from exc
 
-    async def list(self) -> list[CredentialMetadata]:  # noqa: A003
+    async def list(  # noqa: A003
+        self,
+        *,
+        organization_id: str = DEFAULT_ORGANIZATION_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
+    ) -> list[CredentialMetadata]:
         if self._mode == "memory":
             assert self._memory is not None
             out: list[CredentialMetadata] = []
-            for vault_id, meta in self._memory.list_all():
+            for vault_id, meta in self._memory.list_all(
+                organization_id=organization_id,
+                workspace_id=workspace_id,
+            ):
                 out.append(
                     CredentialMetadata(
                         vault_id=vault_id,
@@ -246,6 +388,10 @@ class InfisicalVault(VaultAdapter):
                         scopes=list(meta.get("scopes", [])),
                         created_at=meta.get("created_at", datetime.now(UTC)),
                         metadata=dict(meta.get("metadata", {})),
+                        organization_id=str(
+                            meta.get("organization_id", organization_id)
+                        ),
+                        workspace_id=str(meta.get("workspace_id", workspace_id)),
                     )
                 )
             return out
@@ -264,6 +410,12 @@ class InfisicalVault(VaultAdapter):
         out2: list[CredentialMetadata] = []
         for entry in data.get("secrets", []):
             md = entry.get("secretMetadata", {}) or {}
+            # Filter by tenant scope. Entries missing the tenant
+            # metadata are treated as ``default/default`` (back-compat).
+            entry_org = str(md.get("organization_id", DEFAULT_ORGANIZATION_ID))
+            entry_ws = str(md.get("workspace_id", DEFAULT_WORKSPACE_ID))
+            if entry_org != organization_id or entry_ws != workspace_id:
+                continue
             out2.append(
                 CredentialMetadata(
                     vault_id=str(md.get("vault_id", entry.get("id", ""))),
@@ -274,16 +426,35 @@ class InfisicalVault(VaultAdapter):
                     metadata={
                         k: v
                         for k, v in md.items()
-                        if k not in {"vault_id", "provider", "scopes"}
+                        if k
+                        not in {
+                            "vault_id",
+                            "provider",
+                            "scopes",
+                            "organization_id",
+                            "workspace_id",
+                        }
                     },
+                    organization_id=entry_org,
+                    workspace_id=entry_ws,
                 )
             )
         return out2
 
-    async def get_metadata(self, vault_id: str) -> CredentialMetadata:
+    async def get_metadata(
+        self,
+        vault_id: str,
+        *,
+        organization_id: str = DEFAULT_ORGANIZATION_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
+    ) -> CredentialMetadata:
         if self._mode == "memory":
             assert self._memory is not None
-            meta = self._memory.get_meta(vault_id)
+            meta = self._memory.get_meta(
+                vault_id,
+                organization_id=organization_id,
+                workspace_id=workspace_id,
+            )
             return CredentialMetadata(
                 vault_id=vault_id,
                 name=str(meta.get("name", "")),
@@ -291,27 +462,51 @@ class InfisicalVault(VaultAdapter):
                 scopes=list(meta.get("scopes", [])),
                 created_at=meta.get("created_at", datetime.now(UTC)),
                 metadata=dict(meta.get("metadata", {})),
+                organization_id=str(meta.get("organization_id", organization_id)),
+                workspace_id=str(meta.get("workspace_id", workspace_id)),
             )
         # HTTP path: re-use list and filter; Infisical lacks a direct vault_id endpoint.
-        items = await self.list()
+        items = await self.list(
+            organization_id=organization_id,
+            workspace_id=workspace_id,
+        )
         for item in items:
             if item.vault_id == vault_id:
                 return item
         raise VaultNotFoundError(f"vault entry {vault_id!r} not found")
 
-    async def revoke(self, vault_id: str) -> None:
-        logger.info("vault_revoke", vault_id=vault_id)
+    async def revoke(
+        self,
+        vault_id: str,
+        *,
+        organization_id: str = DEFAULT_ORGANIZATION_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
+    ) -> None:
+        logger.info(
+            "vault_revoke",
+            vault_id=vault_id,
+            organization_id=organization_id,
+            workspace_id=workspace_id,
+        )
 
         if self._mode == "memory":
             assert self._memory is not None
-            self._memory.revoke(vault_id)
+            self._memory.revoke(
+                vault_id,
+                organization_id=organization_id,
+                workspace_id=workspace_id,
+            )
             return
 
         assert self._http is not None
         try:
             # List → find name → delete by name. Idempotent: 404 is fine.
             try:
-                meta = await self.get_metadata(vault_id)
+                meta = await self.get_metadata(
+                    vault_id,
+                    organization_id=organization_id,
+                    workspace_id=workspace_id,
+                )
             except VaultNotFoundError:
                 return
             resp = await self._http.delete(
@@ -332,6 +527,8 @@ class InfisicalVault(VaultAdapter):
         provider: ProviderName | str | None = None,
         scopes: builtins.list[str] | None = None,
         metadata: dict[str, Any] | None = None,
+        organization_id: str = DEFAULT_ORGANIZATION_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> CredentialMetadata:
         """Replace ``vault_id``'s secret with ``value`` (rotate).
 
@@ -355,14 +552,23 @@ class InfisicalVault(VaultAdapter):
         """
         # Carry over fields from the existing record when caller omits them.
         # We tolerate "not found" here so a rotate after a partial failure
-        # still completes; the new credential is what matters.
+        # still completes; the new credential is what matters. Looking up
+        # by tenant scope keeps replace tenant-isolated: a rotation that
+        # references a vault_id from another workspace behaves as if the
+        # entry never existed (no cross-tenant info leak).
         old_meta: CredentialMetadata | None = None
         try:
-            old_meta = await self.get_metadata(vault_id)
+            old_meta = await self.get_metadata(
+                vault_id,
+                organization_id=organization_id,
+                workspace_id=workspace_id,
+            )
         except VaultNotFoundError:
             logger.warning(
                 "vault_replace_old_missing",
                 vault_id=vault_id,
+                organization_id=organization_id,
+                workspace_id=workspace_id,
                 note="proceeding with rotate; old entry not found",
             )
 
@@ -386,6 +592,8 @@ class InfisicalVault(VaultAdapter):
             old_vault_id=vault_id,
             name=effective_name,
             provider=str(effective_provider),
+            organization_id=organization_id,
+            workspace_id=workspace_id,
         )
 
         new_meta = await self.add(
@@ -394,11 +602,17 @@ class InfisicalVault(VaultAdapter):
             value=value,
             scopes=effective_scopes,
             metadata=effective_metadata,
+            organization_id=organization_id,
+            workspace_id=workspace_id,
         )
 
         # Revoke the old entry. Best-effort: if it's already gone, fine.
         try:
-            await self.revoke(vault_id)
+            await self.revoke(
+                vault_id,
+                organization_id=organization_id,
+                workspace_id=workspace_id,
+            )
         except VaultError as exc:
             logger.warning(
                 "vault_replace_revoke_failed",

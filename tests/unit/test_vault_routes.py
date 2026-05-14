@@ -23,6 +23,8 @@ class _MockCredMeta:
         provider: str,
         scopes: list[str],
         created_at: datetime,
+        organization_id: str = "default",
+        workspace_id: str = "default",
     ) -> None:
         self.vault_id = vault_id
         self.name = name
@@ -31,10 +33,19 @@ class _MockCredMeta:
         self.created_at = created_at
         self.expires_at = None
         self.metadata: dict[str, Any] = {}
+        self.organization_id = organization_id
+        self.workspace_id = workspace_id
 
 
 class MockVault:
-    """In-process stand-in for a real ``VaultAdapter`` implementation."""
+    """In-process stand-in for a real ``VaultAdapter`` implementation.
+
+    Tenant-aware (Phase 6.1 finding #1): ``list/get_metadata/revoke``
+    filter by ``organization_id`` + ``workspace_id``. ``add`` records
+    the tenant claim. Cross-tenant ``get_metadata`` raises ``KeyError``
+    so the route can surface 404; cross-tenant ``revoke`` is a silent
+    no-op (matches the InfisicalVault contract).
+    """
 
     def __init__(self) -> None:
         self.items: dict[str, _MockCredMeta] = {}
@@ -42,8 +53,25 @@ class MockVault:
         self.replace_calls: list[tuple[str, str]] = []  # (old_vault_id, new_value)
         self.revoked: list[str] = []
 
-    async def list(self) -> list[_MockCredMeta]:  # noqa: A003
-        return list(self.items.values())
+    def _matches(
+        self, item: _MockCredMeta, organization_id: str, workspace_id: str
+    ) -> bool:
+        return (
+            item.organization_id == organization_id
+            and item.workspace_id == workspace_id
+        )
+
+    async def list(  # noqa: A003
+        self,
+        *,
+        organization_id: str = "default",
+        workspace_id: str = "default",
+    ) -> list[_MockCredMeta]:
+        return [
+            i
+            for i in self.items.values()
+            if self._matches(i, organization_id, workspace_id)
+        ]
 
     async def add(
         self,
@@ -52,6 +80,9 @@ class MockVault:
         value: str,
         scopes: list[str] | None = None,
         metadata: dict[str, Any] | None = None,
+        *,
+        organization_id: str = "default",
+        workspace_id: str = "default",
     ) -> _MockCredMeta:
         vault_id = f"vault_{len(self.items) + len(self.replace_calls) + 1}"
         meta = _MockCredMeta(
@@ -60,6 +91,8 @@ class MockVault:
             provider=provider,
             scopes=list(scopes or []),
             created_at=datetime.now(UTC),
+            organization_id=organization_id,
+            workspace_id=workspace_id,
         )
         if metadata:
             meta.metadata = dict(metadata)
@@ -76,9 +109,15 @@ class MockVault:
         provider: str | None = None,
         scopes: list[str] | None = None,
         metadata: dict[str, Any] | None = None,
+        organization_id: str = "default",
+        workspace_id: str = "default",
     ) -> _MockCredMeta:
         # Mirror the InfisicalVault.replace contract: add new, revoke old.
+        # Tenant-scoped — cross-tenant replace ignores the old entry
+        # (treated as missing) and still produces a new one.
         old = self.items.get(vault_id)
+        if old is not None and not self._matches(old, organization_id, workspace_id):
+            old = None
         effective_name = name or (old.name if old else f"cred_{len(self.items) + 1}")
         effective_provider = provider or (old.provider if old else "custom")
         effective_scopes = (
@@ -95,19 +134,38 @@ class MockVault:
             value=value,
             scopes=effective_scopes,
             metadata=effective_metadata,
+            organization_id=organization_id,
+            workspace_id=workspace_id,
         )
         # Revoke old (idempotent).
-        self.revoked.append(vault_id)
-        self.items.pop(vault_id, None)
+        if old is not None:
+            self.revoked.append(vault_id)
+            self.items.pop(vault_id, None)
         self.replace_calls.append((vault_id, value))
         return new
 
-    async def get_metadata(self, vault_id: str) -> _MockCredMeta:
-        if vault_id not in self.items:
+    async def get_metadata(
+        self,
+        vault_id: str,
+        *,
+        organization_id: str = "default",
+        workspace_id: str = "default",
+    ) -> _MockCredMeta:
+        item = self.items.get(vault_id)
+        if item is None or not self._matches(item, organization_id, workspace_id):
             raise KeyError(vault_id)
-        return self.items[vault_id]
+        return item
 
-    async def revoke(self, vault_id: str) -> None:
+    async def revoke(
+        self,
+        vault_id: str,
+        *,
+        organization_id: str = "default",
+        workspace_id: str = "default",
+    ) -> None:
+        item = self.items.get(vault_id)
+        if item is None or not self._matches(item, organization_id, workspace_id):
+            return  # cross-tenant or missing → silent no-op
         self.revoked.append(vault_id)
         self.items.pop(vault_id, None)
 
