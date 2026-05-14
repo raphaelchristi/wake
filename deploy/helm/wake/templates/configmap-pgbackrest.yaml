@@ -1,0 +1,76 @@
+{{- if .Values.backup.enabled }}
+{{- /*
+  Pgbackrest configuration ConfigMap.
+
+  Pgbackrest reads /etc/pgbackrest/pgbackrest.conf at startup. We render
+  the conf file from values so operators can change cadence / retention /
+  S3 endpoint via `helm upgrade --set ...` without touching templates.
+
+  The S3 creds themselves are NOT in this ConfigMap — they're projected
+  from the backup-s3 Secret as environment variables (`PGBACKREST_REPO1_S3_KEY`
+  and `PGBACKREST_REPO1_S3_KEY_SECRET`) by the CronJob spec. This keeps
+  rotatable secrets out of the ConfigMap (which is plain text).
+
+  Stanza naming: defaults to `<release>-wake` so multiple Wake clusters
+  can share a bucket without collisions.
+*/}}
+{{- $stanza := default (printf "%s-wake" .Release.Name) .Values.backup.stanza }}
+{{- $pgHost := printf "%s-postgres" (include "wake.fullname" .) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "wake.fullname" . }}-pgbackrest
+  labels:
+    {{- include "wake.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backup
+data:
+  pgbackrest.conf: |
+    [global]
+    # Repository: S3-compatible object store.
+    repo1-type=s3
+    repo1-s3-bucket={{ .Values.backup.s3.bucket }}
+    {{- if .Values.backup.s3.endpoint }}
+    repo1-s3-endpoint={{ .Values.backup.s3.endpoint }}
+    {{- else }}
+    repo1-s3-endpoint=s3.{{ .Values.backup.s3.region }}.amazonaws.com
+    {{- end }}
+    repo1-s3-region={{ .Values.backup.s3.region }}
+    repo1-s3-uri-style={{ .Values.backup.s3.uriStyle }}
+    repo1-s3-verify-tls={{ .Values.backup.s3.verifyTls }}
+    repo1-path=/pgbackrest
+
+    # Retention. Pgbackrest expires by COUNT not by time.
+    repo1-retention-full={{ .Values.backup.retention.full }}
+    repo1-retention-full-type=count
+    repo1-retention-archive={{ .Values.backup.retention.incremental }}
+    repo1-retention-archive-type=incr
+
+    # Compression — zstd is faster + smaller than gzip.
+    compress-type=zst
+    compress-level=3
+
+    # Parallelism.
+    process-max={{ .Values.backup.processMax }}
+
+    # Logging — go to stdout so kubectl logs picks up backup output.
+    log-level-console=info
+    log-level-file=off
+    log-path=/tmp
+
+    # Archive checks — verifies WAL archive is reachable before backup
+    # starts. Catches misconfigured archive_command early.
+    archive-check={{ .Values.backup.archiveCheck }}
+
+    # Disable start-stop on the database itself (pgbackrest cannot stop
+    # a managed Postgres). We rely on online backups + WAL.
+    start-fast=y
+
+    [{{ $stanza }}]
+    # Postgres connection. The CronJob runs in-cluster so we can use the
+    # service DNS name. Auth comes from PGPASSWORD env (mounted from the
+    # postgres-password Secret).
+    pg1-host={{ $pgHost }}
+    pg1-port=5432
+    pg1-user={{ .Values.postgres.user }}
+    pg1-database={{ .Values.postgres.database }}
+{{- end }}

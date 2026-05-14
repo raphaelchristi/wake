@@ -240,6 +240,120 @@ observability:
     serviceNamePrefix: "wake"
 
 # ---------------------------------------------------------------------------
+# Backup — pgbackrest-based Postgres backup to S3-compatible object store.
+#
+# Phase 6 / Tier 0 gap #3. Pgbackrest is a sidecar/cron-driven workflow:
+#   * Weekly full backup (default Sun 02:00 UTC) — `pgbackrest --type=full`
+#   * Daily incremental (default Mon-Sat 02:00 UTC) — `pgbackrest --type=incr`
+#
+# Retention is by COUNT, not by time:
+#   * retention.full = 4   → keep 4 weekly full backups (≈ 28d)
+#   * retention.incremental = 30  → keep 30 incremental backups
+#
+# Storage: any S3-compatible endpoint works (AWS S3, MinIO, Cloudflare R2,
+# Backblaze B2, etc). Set ``s3.secretName`` to reference a pre-existing
+# Secret containing ``accessKeyId`` + ``secretAccessKey`` keys (recommended
+# for prod), OR set ``s3.accessKeyId`` + ``s3.secretAccessKey`` inline (the
+# chart will render a managed Secret — fine for dev / sealed-secrets flows).
+#
+# RTO target: < 30 minutes (validated weekly in CI via scripts/restore-drill.sh)
+# RPO target: < 24 hours (incremental cadence)
+#
+# Default: backup.enabled = false (opt-in). Production deployments MUST
+# flip this to true. See docs/DISASTER-RECOVERY.md for the runbook.
+# ---------------------------------------------------------------------------
+
+backup:
+  enabled: false
+
+  # Image of the pgbackrest CronJob container. Pin a digest in prod.
+  image:
+    repository: pgbackrest/pgbackrest
+    tag: "2.54.0"
+    pullPolicy: IfNotPresent
+
+  # Cron schedules (UTC). Override per environment. The default places the
+  # full backup on Sunday 02:00 and incrementals on Mon-Sat 02:00 so daily
+  # backups are guaranteed regardless of day-of-week.
+  schedule:
+    full: "0 2 * * 0"
+    incremental: "0 2 * * 1-6"
+
+  # Retention policy. Pgbackrest expires old backups automatically when
+  # these counts are exceeded.
+  retention:
+    # Number of weekly full backups to keep (≈ 4 weeks).
+    full: 4
+    # Number of incremental backups to keep (≈ 30 days at one/day).
+    incremental: 30
+
+  # pgbackrest stanza name. Stanza = logical grouping of one cluster's
+  # backups in the repository. Default uses release fullname so multiple
+  # Wake instances sharing a bucket don't collide.
+  stanza: ""
+
+  # Process count for parallel compression / upload. Bumping to 4-8 is
+  # safe on hosts with enough CPU and noticeably speeds large backups.
+  processMax: 2
+
+  # WAL retention — number of WAL archive snapshots to retain alongside
+  # backups. Required for any point-in-time restore between full backups.
+  archiveCheck: true
+
+  # S3-compatible storage. Set ``secretName`` to BYO Secret OR fill
+  # accessKeyId/secretAccessKey inline. Production: prefer ``secretName``.
+  s3:
+    # Endpoint URL. Examples:
+    #   AWS S3:        https://s3.amazonaws.com (leave empty for AWS)
+    #   MinIO:         http://minio.minio.svc.cluster.local:9000
+    #   Cloudflare R2: https://<account>.r2.cloudflarestorage.com
+    endpoint: ""
+    bucket: ""
+    region: "us-east-1"
+    # Path-style addressing vs virtual-hosted. MinIO / R2 require path.
+    uriStyle: "path"
+    # Verify TLS certificates. Set false ONLY for MinIO-with-self-signed.
+    verifyTls: true
+    # BYO Secret. Must contain keys ``access-key-id`` + ``secret-access-key``.
+    # When set, the chart will NOT render its own backup-s3 Secret and the
+    # CronJob will mount these creds from the referenced Secret.
+    secretName: ""
+    # Inline creds (only used when secretName is empty). Stored b64-encoded
+    # in the chart-managed Secret. Avoid committing real creds to values.
+    accessKeyId: ""
+    secretAccessKey: ""
+
+  # Restore-test Job — runs pgbackrest restore into an EMPTY PVC then
+  # verifies it can start. Useful as a Helm hook (post-install,
+  # post-upgrade) for early detection of bad backups, but most operators
+  # leave this off and rely on the weekly CI drill (scripts/restore-drill.sh)
+  # because the hook adds 5-10min to every upgrade.
+  restoreTest:
+    enabled: false
+    # Hooks: "test" runs only on `helm test`; "post-install,post-upgrade"
+    # runs after every install/upgrade. Use "test" by default.
+    hookType: "test"
+    # Storage for the throwaway restore target.
+    storage:
+      size: 10Gi
+      storageClass: ""
+
+  # CronJob resources. Backups are I/O heavy not CPU heavy; defaults are
+  # tuned for a Wake-sized cluster (< 100GB DB).
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: 1
+      memory: 1Gi
+
+  # Optional: pod node placement controls.
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# ---------------------------------------------------------------------------
 # Pod security defaults.
 # ---------------------------------------------------------------------------
 
