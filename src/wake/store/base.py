@@ -382,6 +382,39 @@ class AgentStore(ABC):
     async def archive(self, id: str, *, workspace_id: str | None = None) -> AgentConfig:
         """Set ``archived_at`` on the agent and return the latest version."""
 
+    # ------------------------------------------------------------------
+    # Canary version selection (Phase 8 — Tier 2 gap #12)
+    # ------------------------------------------------------------------
+
+    async def select_for_new_session(
+        self,
+        id: str,
+        *,
+        workspace_id: str | None = None,
+        rng: Any | None = None,
+    ) -> AgentConfig | None:
+        """Pick the agent version a new session should run against.
+
+        Default implementation: load every version via
+        ``list_versions`` and dispatch to
+        :func:`wake.runtime.canary.select_version`. Backends MAY
+        override for performance (e.g. Postgres can do a single SQL
+        with the canary weight filter inline) but the *semantics*
+        must match.
+
+        Returns ``None`` when the agent has no versions (caller decides
+        whether that's a 404 or a fresh-create path).
+
+        ``rng`` lets tests inject a deterministic ``random.Random`` so
+        canary distributions can be asserted exactly.
+        """
+        from wake.runtime.canary import select_version  # avoid cycle
+
+        versions = await self.list_versions(id, workspace_id=workspace_id)
+        if not versions:
+            return None
+        return select_version(versions, rng=rng)
+
 
 # ---------------------------------------------------------------------------
 # EnvironmentStore
