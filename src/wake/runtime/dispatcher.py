@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from wake.adapters.base import LifecycleEvent
     from wake.adapters.registry import AdapterRegistry
     from wake.core.event_log import EventLog
+    from wake.runtime.cost_budget import CostBudgetEnforcer
     from wake.tools.registry import ToolRegistry as WakeToolsRegistry
     from wake.types import AgentConfig, Event, SandboxHandle, Session
 
@@ -51,11 +52,18 @@ class SessionDispatcher:
         tool_registry: WakeToolsRegistry,
         *,
         default_adapter: str = DEFAULT_ADAPTER_NAME,
+        cost_budget: CostBudgetEnforcer | None = None,
     ) -> None:
         self._adapters = adapter_registry
         self._event_log = event_log
         self._tools = tool_registry
         self._default_adapter = default_adapter
+        # Optional — when wired, the dispatcher checks the per-session
+        # cost-budget after every adapter step and interrupts the
+        # session if the running total exceeds ``agent.metadata.max_cost_usd``.
+        # Defaults to None so existing tests + adapters that build a
+        # dispatcher manually don't have to wire it.
+        self._cost_budget = cost_budget
 
     def resolve_adapter_name(self, agent: AgentConfig) -> str:
         """Pick the adapter name for an agent.
@@ -132,3 +140,25 @@ class SessionDispatcher:
                 parent_id=emitted.parent_id,
                 metadata=emitted.metadata,
             )
+
+        # Post-step cost budget enforcement — Phase 7 gap #7.
+        # Reactive (not predictive): if running total of cost_usd across
+        # the session log exceeds ``agent.metadata.max_cost_usd`` we
+        # emit an interrupt event + tip the session to terminated. The
+        # next worker poll observes the terminated session and skips it.
+        if self._cost_budget is not None:
+            try:
+                await self._cost_budget.check(
+                    session.id,
+                    agent,
+                    workspace_id=session.workspace_id,
+                )
+            except Exception:  # noqa: BLE001
+                # Never propagate enforcement failures — a broken
+                # enforcer must not break the dispatch loop.
+                logger.warning(
+                    "dispatcher_cost_budget_check_failed",
+                    session_id=session.id,
+                    agent_id=agent.id,
+                    exc_info=True,
+                )

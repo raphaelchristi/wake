@@ -269,7 +269,14 @@ async def build_components(
     tool_registry = ToolRegistry(sandbox=sandbox)
     adapter_registry = AdapterRegistry()
     adapter_registry.discover()
-    dispatcher = SessionDispatcher(adapter_registry, event_log, tool_registry)
+    # Phase 7 — cost-budget enforcer. Wires post-step interrupt when
+    # the per-session running cost exceeds ``agent.metadata.max_cost_usd``.
+    from wake.runtime.cost_budget import CostBudgetEnforcer
+
+    cost_budget = CostBudgetEnforcer(event_log, session_machine)
+    dispatcher = SessionDispatcher(
+        adapter_registry, event_log, tool_registry, cost_budget=cost_budget
+    )
 
     logger.info(
         "bootstrap.components.ready",

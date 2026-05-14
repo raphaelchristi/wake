@@ -21,6 +21,7 @@ from wake.store.base import (
     AgentStore,
     EnvironmentStore,
     EventStore,
+    PurgeResult,
     SessionStore,
     StoreError,
     UserStore,
@@ -129,6 +130,83 @@ class InMemoryEventStore(EventStore):
 
     async def count(self, session_id: str, *, workspace_id: str | None = None) -> int:
         return len(await self.get(session_id, workspace_id=workspace_id))
+
+    # ------------------------------------------------------------------
+    # Retention helpers (Phase 7 — gap #5). Minimal in-memory impls so
+    # the default ``compact_session`` works against the fake.
+    # ------------------------------------------------------------------
+
+    async def _delete_events(
+        self,
+        event_ids: list[str],
+        *,
+        workspace_id: str | None = None,
+    ) -> int:
+        if not event_ids:
+            return 0
+        wanted = set(event_ids)
+        deleted = 0
+        for sid, evs in self._events.items():
+            kept: list[Event] = []
+            for ev in evs:
+                if ev.id in wanted and (
+                    workspace_id is None or ev.workspace_id == workspace_id
+                ):
+                    deleted += 1
+                    continue
+                kept.append(ev)
+            self._events[sid] = kept
+        return deleted
+
+    async def iter_for_archive(
+        self,
+        cutoff: datetime,
+        *,
+        workspace_id: str | None = None,
+        batch_size: int = 1000,
+    ) -> AsyncIterator[list[Event]]:
+        return self._iter_for_archive_impl(
+            cutoff, workspace_id=workspace_id, batch_size=batch_size
+        )
+
+    async def _iter_for_archive_impl(
+        self,
+        cutoff: datetime,
+        *,
+        workspace_id: str | None,
+        batch_size: int,
+    ) -> AsyncIterator[list[Event]]:
+        all_old: list[Event] = []
+        for sid in sorted(self._events.keys()):
+            for ev in self._events[sid]:
+                if ev.created_at >= cutoff:
+                    continue
+                if workspace_id is not None and ev.workspace_id != workspace_id:
+                    continue
+                all_old.append(ev)
+        for i in range(0, len(all_old), batch_size):
+            yield all_old[i : i + batch_size]
+
+    async def purge_before(
+        self,
+        cutoff: datetime,
+        *,
+        workspace_id: str | None = None,
+        dry_run: bool = False,
+        batch_size: int = 1000,
+    ) -> PurgeResult:
+        candidates: list[str] = []
+        for evs in self._events.values():
+            for ev in evs:
+                if ev.created_at >= cutoff:
+                    continue
+                if workspace_id is not None and ev.workspace_id != workspace_id:
+                    continue
+                candidates.append(ev.id)
+        if dry_run:
+            return PurgeResult(deleted=len(candidates), dry_run=True)
+        deleted = await self._delete_events(candidates, workspace_id=workspace_id)
+        return PurgeResult(deleted=deleted, dry_run=False)
 
 
 class InMemoryAgentStore(AgentStore):
