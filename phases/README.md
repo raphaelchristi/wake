@@ -18,8 +18,8 @@ Plano de execução do Wake. Cada fase tem **gates de saída objetivos** — voc
 | [Phase 5](./PHASE-5-operator-ui.md) | Operator UI (Wake Dashboard) | 3-5 semanas | ✅ done |
 | [Phase 5.1](./PHASE-5.1-CONTRACT.md) | Adversarial Review Fixes | 2-3h | ✅ done |
 | Phase 5.2 | Adversarial Review Fixes (2nd pass) | <1h | ✅ done |
-| [**Phase 6**](./PHASE-6-multi-tenancy.md) | **Multi-tenancy + RBAC + Backup** ([CONTRACT](./PHASE-6-CONTRACT.md)) | 3-4 semanas | 🟡 in_progress — backend baseline shipped (`v0.5.3-tenancy-backend`) |
-| Phase 7 | Operational Hardening (idempotency, retention, rate limit, cost budget, Prometheus full surface) | 2-3 semanas | ⚪ not_started |
+| [**Phase 6**](./PHASE-6-multi-tenancy.md) | **Multi-tenancy + RBAC + Backup** ([CONTRACT](./PHASE-6-CONTRACT.md)) | 3-4 semanas | ✅ done (`v0.6.0-tenancy`) |
+| Phase 7 | Operational Hardening (idempotency, retention, rate limit, cost budget, Prometheus full surface) | 2-3 semanas | 🟡 next |
 | Phase 8 | Client SDKs (Python + TS) + Edit-and-replay + Eval framework | 2-3 semanas | ⚪ not_started |
 | Phase 9 | Ecosystem & Trust (adapter catalog, supply chain, benchmarks, reference archs) | 2 semanas | ⚪ not_started |
 | [Phase 10](./PHASE-10-public-launch.md) | Public Launch (era Phase 6) | 1 semana | ⚪ not_started |

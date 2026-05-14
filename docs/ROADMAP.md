@@ -12,10 +12,10 @@
 
 ## TL;DR — re-priorizando o roadmap
 
-| Phase | Foco | Tier que resolve | Por quê |
-|---|---|---|---|
-| **6** | Multi-tenancy + RBAC | Tier 0 | Bloqueia qualquer customer real |
-| **7** | Operational hardening (backup, retention, rate limit, idempotency, Prometheus) | Tier 1 | Sem isso, Wake é "dev tool" não "prod substrate" |
+| Phase | Foco | Tier que resolve | Por quê | Status |
+|---|---|---|---|---|
+| **6** | Multi-tenancy + RBAC + backup | Tier 0 (#1 #2 #3) | Bloqueia qualquer customer real | ✅ done (`v0.6.0-tenancy`) |
+| **7** | Operational hardening (idempotency, retention, rate limit, cost budget, Prometheus) | Tier 1 | Sem isso, Wake é "dev tool" não "prod substrate" | 🟡 next |
 | **8** | Client SDKs (Python + TS) + edit-and-replay + eval framework | Tier 2 | É o que faz developers contratarem Wake |
 | **9** | Adapter catalog público + supply chain + benchmarks | Tier 3 | Constrói confiança ecosystem |
 | **10** | Public Launch (era Phase 6) | — | Agora com história contável |
@@ -28,6 +28,8 @@
 ---
 
 ## Tier 0 — Bloqueia qualquer customer real
+
+> **✅ RESOLVIDO em Phase 6 (`v0.6.0-tenancy`, 2026-05-14)** — gaps #1, #2, #3 fechados via 3 slices paralelos (RBAC backend / frontend tenancy / pgbackrest + DR runbook). Mantidos abaixo por contexto histórico do estado original.
 
 ### 1. Multi-tenancy não existe
 
@@ -194,9 +196,11 @@ Coisas que Anthropic shipou e Wake nem encostou.
 
 ## Plano detalhado por phase (proposed)
 
-### Phase 6 — Multi-tenancy & RBAC
+### Phase 6 — Multi-tenancy & RBAC ✅ DONE (`v0.6.0-tenancy`)
 
 **Resolve Tier 0** · **Goal:** Wake suporta múltiplas organizações isoladas com permissões por usuário e backup operational.
+
+Status: ✅ done em 2026-05-14 via 3 slices multi-agent paralelos (`tenancy-rbac`, `tenancy-frontend`, `tenancy-ops`). Tag `v0.6.0-tenancy`. 382 unit tests pass + 107 vitest pass + 8/10 playwright pass + helm lint clean + DISASTER-RECOVERY 1028 linhas + RUNBOOK 919 linhas. Detalhes em [`phases/PHASE-6-multi-tenancy.md`](../phases/PHASE-6-multi-tenancy.md) + [`phases/PHASE-6-CONTRACT.md`](../phases/PHASE-6-CONTRACT.md).
 
 Deliverables:
 - `Organization` / `Workspace` entity + tables
