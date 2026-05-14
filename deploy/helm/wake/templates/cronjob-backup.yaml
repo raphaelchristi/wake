@@ -17,7 +17,11 @@
 
   History limits: keep last 3 successful + 3 failed pod logs for forensics.
 */}}
-{{- $stanza := default (printf "%s-wake" .Release.Name) .Values.backup.stanza }}
+{{- if and .Values.backup.enabled (not .Values.backup.repositoryId) }}
+{{- fail (printf "backup.repositoryId is required when backup.enabled=true (Phase 6.1 finding #5). Set it to a cluster-unique value such as '<cluster>-<namespace>-<release>' so two clusters sharing a bucket cannot collide on stanza or repo1-path. See deploy/helm/wake/README.md for guidance.") }}
+{{- end }}
+{{- $repoId := required "backup.repositoryId is required when backup.enabled=true" .Values.backup.repositoryId }}
+{{- $stanza := default (printf "%s-%s" $repoId .Release.Name) .Values.backup.stanza }}
 {{- $fullName := include "wake.fullname" . }}
 {{- $secretName := default (printf "%s-backup-s3" $fullName) .Values.backup.s3.secretName }}
 

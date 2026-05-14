@@ -11,10 +11,24 @@
   and `PGBACKREST_REPO1_S3_KEY_SECRET`) by the CronJob spec. This keeps
   rotatable secrets out of the ConfigMap (which is plain text).
 
-  Stanza naming: defaults to `<release>-wake` so multiple Wake clusters
-  can share a bucket without collisions.
+  Stanza + repo path naming (Phase 6.1 finding #5 fix):
+    Helm release names are commonly reused across namespaces and clusters.
+    Two clusters that share a bucket and a release name would silently
+    collide on `<release>-wake` and `repo1-path=/pgbackrest` — backups,
+    WAL archive metadata, retention expiry, and restore targets would
+    all interleave, and a restore could load the wrong cluster's data.
+
+    `backup.repositoryId` is now REQUIRED whenever `backup.enabled=true`
+    (enforced in values.schema.json). It is woven into BOTH the stanza
+    and `repo1-path` so cluster A and cluster B can share a bucket
+    safely.
 */}}
-{{- $stanza := default (printf "%s-wake" .Release.Name) .Values.backup.stanza }}
+{{- if and .Values.backup.enabled (not .Values.backup.repositoryId) }}
+{{- fail (printf "backup.repositoryId is required when backup.enabled=true (Phase 6.1 finding #5). Set it to a cluster-unique value such as '<cluster>-<namespace>-<release>' so two clusters sharing a bucket cannot collide on stanza or repo1-path. See deploy/helm/wake/README.md for guidance.") }}
+{{- end }}
+{{- $repoId := required "backup.repositoryId is required when backup.enabled=true" .Values.backup.repositoryId }}
+{{- $stanza := default (printf "%s-%s" $repoId .Release.Name) .Values.backup.stanza }}
+{{- $repoPath := printf "/pgbackrest/%s" $repoId }}
 {{- $pgHost := printf "%s-postgres" (include "wake.fullname" .) }}
 apiVersion: v1
 kind: ConfigMap
@@ -37,7 +51,11 @@ data:
     repo1-s3-region={{ .Values.backup.s3.region }}
     repo1-s3-uri-style={{ .Values.backup.s3.uriStyle }}
     repo1-s3-verify-tls={{ .Values.backup.s3.verifyTls }}
-    repo1-path=/pgbackrest
+    # repo1-path is namespaced by ``backup.repositoryId`` so multiple
+    # Wake clusters can share a bucket without colliding. Changing
+    # ``backup.repositoryId`` after the first backup orphans the old
+    # repo — pick a value once per cluster identity and keep it stable.
+    repo1-path={{ $repoPath }}
 
     # Retention. Pgbackrest expires by COUNT not by time.
     repo1-retention-full={{ .Values.backup.retention.full }}

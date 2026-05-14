@@ -81,9 +81,14 @@
           },
           "required": ["full", "incremental"]
         },
+        "repositoryId": {
+          "type": "string",
+          "description": "REQUIRED when backup.enabled=true (Phase 6.1 finding #5). Cluster-unique value woven into stanza + repo1-path. Two clusters sharing a bucket MUST pick different values to avoid silent collisions on stanza, WAL archive, and retention expiry. Empty when backup is disabled.",
+          "pattern": "^([a-z0-9][a-z0-9-]{0,62})?$"
+        },
         "stanza": {
           "type": "string",
-          "description": "Pgbackrest stanza name. Empty = derived from release name."
+          "description": "Pgbackrest stanza name. Empty = derived from repositoryId + release name."
         },
         "processMax": {
           "type": "integer",

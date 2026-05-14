@@ -287,9 +287,21 @@ backup:
     # Number of incremental backups to keep (≈ 30 days at one/day).
     incremental: 30
 
+  # REQUIRED when backup.enabled=true (Phase 6.1 finding #5 fix).
+  # Cluster-unique repository identity baked into BOTH the pgbackrest
+  # stanza name AND ``repo1-path``. Pick a stable value per cluster
+  # identity (e.g. ``"prod-eu-west-1"``, ``"<cluster>-<namespace>-<release>"``).
+  # Two clusters sharing the same bucket MUST pick different values or
+  # backups will silently collide. Changing the value after the first
+  # backup orphans the old repo. Helm renders this into:
+  #   * stanza      → ``<repositoryId>-<release>`` (override with .stanza)
+  #   * repo1-path  → ``/pgbackrest/<repositoryId>``
+  repositoryId: ""
+
   # pgbackrest stanza name. Stanza = logical grouping of one cluster's
-  # backups in the repository. Default uses release fullname so multiple
-  # Wake instances sharing a bucket don't collide.
+  # backups in the repository. Defaults to ``<repositoryId>-<release>``
+  # so deployments that pick a unique repositoryId never need to set
+  # this. Only override when migrating from a pre-6.1 install.
   stanza: ""
 
   # Process count for parallel compression / upload. Bumping to 4-8 is
