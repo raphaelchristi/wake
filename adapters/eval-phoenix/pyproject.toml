@@ -1,0 +1,32 @@
+[build-system]
+requires = ["hatchling>=1.18"]
+build-backend = "hatchling.build"
+
+[project]
+name = "wake-eval-phoenix"
+version = "0.1.0"
+description = "Wake eval framework adapter for Arize Phoenix."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Wake AI Maintainers" }]
+classifiers = [
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "wake-ai",
+    "arize-phoenix-client>=1.0; python_version >= '3.11'",
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.3", "pytest-asyncio>=0.24", "ruff>=0.7"]
+
+[project.entry-points."wake.eval.adapters"]
+phoenix = "wake_eval_phoenix.adapter:PhoenixEvalAdapter"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/wake_eval_phoenix"]
