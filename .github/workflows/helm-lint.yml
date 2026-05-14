@@ -1,0 +1,103 @@
+name: Helm Lint + Template Smoke
+
+# Phase 6 — verify the Helm chart renders cleanly across the backup
+# enable/disable matrix. Catches regressions in `deploy/helm/wake/templates/`
+# and `values.schema.json` schema mismatches.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "deploy/helm/wake/**"
+      - ".github/workflows/helm-lint.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "deploy/helm/wake/**"
+      - ".github/workflows/helm-lint.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: helm-lint-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: helm lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: "v3.16.4"
+      - name: helm lint
+        run: |
+          helm lint deploy/helm/wake \
+            --set auth.apiKey=test \
+            --set auth.oauthStateSecret=test
+
+  template-matrix:
+    name: helm template (${{ matrix.scenario }})
+    runs-on: ubuntu-latest
+    needs: lint
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario:
+          - "backup-disabled"
+          - "backup-enabled-inline-creds"
+          - "backup-enabled-byo-secret"
+          - "backup-enabled-restore-test"
+          - "multi-replica"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: "v3.16.4"
+
+      - name: Set scenario flags
+        id: flags
+        run: |
+          case "${{ matrix.scenario }}" in
+            backup-disabled)
+              echo "flags=--set auth.apiKey=test --set auth.oauthStateSecret=test" >> "$GITHUB_OUTPUT"
+              ;;
+            backup-enabled-inline-creds)
+              echo "flags=--set auth.apiKey=test --set auth.oauthStateSecret=test --set backup.enabled=true --set backup.s3.bucket=test --set backup.s3.accessKeyId=k --set backup.s3.secretAccessKey=s" >> "$GITHUB_OUTPUT"
+              ;;
+            backup-enabled-byo-secret)
+              echo "flags=--set auth.apiKey=test --set auth.oauthStateSecret=test --set backup.enabled=true --set backup.s3.bucket=test --set backup.s3.secretName=byo-creds" >> "$GITHUB_OUTPUT"
+              ;;
+            backup-enabled-restore-test)
+              echo "flags=--set auth.apiKey=test --set auth.oauthStateSecret=test --set backup.enabled=true --set backup.s3.bucket=test --set backup.s3.accessKeyId=k --set backup.s3.secretAccessKey=s --set backup.restoreTest.enabled=true" >> "$GITHUB_OUTPUT"
+              ;;
+            multi-replica)
+              echo "flags=--set auth.apiKey=test --set auth.oauthStateSecret=test --set api.replicas=4" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
+
+      - name: helm template
+        run: |
+          helm template wake deploy/helm/wake ${{ steps.flags.outputs.flags }} > rendered.yaml
+          echo "rendered $(wc -l < rendered.yaml) lines"
+          # Sanity: must contain at least one Deployment.
+          grep -q "kind: Deployment" rendered.yaml || { echo "no Deployment found"; exit 1; }
+          # Scenario-specific assertions.
+          case "${{ matrix.scenario }}" in
+            backup-disabled)
+              if grep -qi "kind: CronJob" rendered.yaml; then
+                echo "FAIL: CronJob rendered when backup.enabled=false"
+                exit 1
+              fi
+              ;;
+            backup-enabled-*)
+              grep -q "kind: CronJob" rendered.yaml || { echo "FAIL: no CronJob with backup.enabled=true"; exit 1; }
+              grep -q "backup-full" rendered.yaml || { echo "FAIL: full backup CronJob missing"; exit 1; }
+              grep -q "backup-incremental" rendered.yaml || { echo "FAIL: incremental backup CronJob missing"; exit 1; }
+              ;;
+          esac
+
+      - name: kubectl dry-run
+        run: |
+          kubectl version --client
+          helm template wake deploy/helm/wake ${{ steps.flags.outputs.flags }} | kubectl apply --dry-run=client -f -

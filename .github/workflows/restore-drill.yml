@@ -1,0 +1,89 @@
+name: Restore Drill
+
+# Phase 6 / Tier 0 gap #3 — weekly automated restore drill.
+#
+# Runs scripts/restore-drill.sh which:
+#   1. Spins up throwaway Postgres + MinIO via docker compose.
+#   2. Seeds tables, runs pgbackrest backup, truncates, restores.
+#   3. Asserts row counts > 0 and RTO < 30 minutes.
+#
+# Failure = page on-call (wire the workflow result to your incident
+# channel via a follow-up notification step in your fork). The point
+# of the drill is to find broken backups BEFORE we need them.
+
+on:
+  schedule:
+    # Sundays 06:00 UTC — after the production backup CronJob has run
+    # (Sun 02:00 UTC) so the drill exercises the freshest backup.
+    - cron: "0 6 * * 0"
+  workflow_dispatch:
+    inputs:
+      rto_budget:
+        description: "RTO budget in seconds (default 1800)"
+        required: false
+        default: "1800"
+      seed_rows:
+        description: "Rows per critical table to seed (default 100)"
+        required: false
+        default: "100"
+
+concurrency:
+  group: restore-drill
+  cancel-in-progress: false
+
+jobs:
+  drill:
+    name: Restore drill (Postgres → pgbackrest → MinIO)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show Docker version
+        run: |
+          docker version
+          docker compose version
+
+      - name: Run restore drill
+        env:
+          RTO_BUDGET_SECONDS: ${{ inputs.rto_budget || '1800' }}
+          SEED_ROWS: ${{ inputs.seed_rows || '100' }}
+          KEEP_ARTIFACTS: "0"
+          WAKE_API_KEY: "drill-ci-${{ github.run_id }}"
+        run: |
+          bash scripts/restore-drill.sh 2>&1 | tee drill.log
+
+      - name: Upload drill log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: restore-drill-log-${{ github.run_id }}
+          path: drill.log
+          retention-days: 90
+
+      - name: Extract metrics
+        if: always()
+        run: |
+          # Best-effort metric extraction for dashboarding. Pulls RTO +
+          # PASS/FAIL out of the log into a single-line JSON blob suitable
+          # for ingestion into Grafana / Datadog via a downstream step.
+          {
+            echo "{"
+            echo "  \"timestamp\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\","
+            echo "  \"run_id\": \"${{ github.run_id }}\","
+            rto=$(grep -oE 'RTO within budget: [0-9]+s' drill.log | grep -oE '[0-9]+' | head -1)
+            echo "  \"rto_seconds\": ${rto:-null},"
+            result=$(grep -oE 'result: +(PASS|FAIL)' drill.log | grep -oE '(PASS|FAIL)' | head -1)
+            echo "  \"result\": \"${result:-UNKNOWN}\""
+            echo "}"
+          } > drill-metrics.json
+          cat drill-metrics.json
+
+      - name: Upload metrics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: restore-drill-metrics-${{ github.run_id }}
+          path: drill-metrics.json
+          retention-days: 365

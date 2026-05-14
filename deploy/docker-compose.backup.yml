@@ -1,0 +1,87 @@
+# Wake — pgbackrest + MinIO override for dev/test backups.
+#
+# Compose override file that layers a MinIO container (S3-compatible
+# object store) + a pgbackrest sidecar on top of the base
+# docker-compose.yml. Use it for local backup testing without an AWS
+# account.
+#
+# Usage:
+#   # 1. Start the full stack with the backup override.
+#   docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.backup.yml up -d
+#
+#   # 2. One-off full backup.
+#   docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.backup.yml \
+#     run --rm pgbackrest pgbackrest --stanza=wake-dev backup --type=full
+#
+#   # 3. List backups.
+#   docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.backup.yml \
+#     run --rm pgbackrest pgbackrest --stanza=wake-dev info
+#
+#   # 4. Restore (into throwaway dir on the host).
+#   docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.backup.yml \
+#     run --rm pgbackrest pgbackrest --stanza=wake-dev --pg1-path=/restore --delta restore
+#
+# MinIO console: http://localhost:9001 (login wake-minio / wake-minio-password)
+#
+# This file does NOT add cron — local dev should run backups manually
+# via `docker compose run`. Production cadence lives in the Helm chart.
+
+services:
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    profiles: ["backup"]
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: wake-minio
+      MINIO_ROOT_PASSWORD: wake-minio-password
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # Web console
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # One-shot init container that creates the wake-backups bucket on MinIO.
+  # Idempotent — re-runs are no-ops once the bucket exists.
+  minio-init:
+    image: minio/mc:latest
+    profiles: ["backup"]
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: |
+      /bin/sh -c "
+      mc alias set local http://minio:9000 wake-minio wake-minio-password &&
+      mc mb --ignore-existing local/wake-backups &&
+      echo 'bucket wake-backups ready'
+      "
+
+  pgbackrest:
+    image: pgbackrest/pgbackrest:2.54.0
+    profiles: ["backup"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:-wake-dev-password}
+      PGBACKREST_REPO1_S3_KEY: wake-minio
+      PGBACKREST_REPO1_S3_KEY_SECRET: wake-minio-password
+    volumes:
+      - ./pgbackrest/pgbackrest.dev.conf:/etc/pgbackrest/pgbackrest.conf:ro
+      - pgbackrest-tmp:/tmp
+      - pgbackrest-restore:/restore
+    # No long-running process — image is invoked via `docker compose run`.
+    # Keep stub command so `up` doesn't crash if profile is active.
+    command: ["sh", "-c", "echo 'pgbackrest sidecar ready — invoke via docker compose run pgbackrest <cmd>'; sleep infinity"]
+
+volumes:
+  minio-data: {}
+  pgbackrest-tmp: {}
+  pgbackrest-restore: {}
