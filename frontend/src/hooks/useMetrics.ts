@@ -29,6 +29,14 @@ export interface UseMetricsOptions {
  *
  * The shell slice will eventually wire TanStack Query in; until then this
  * hook is intentionally dependency-free so it works on a bare Next app.
+ *
+ * Tenancy isolation (Codex review MEDIUM #3 — Phase 6):
+ *   - Em mudança de workspace (`workspaceId` muda) o state local é resetado
+ *     IMEDIATAMENTE (`data = null`, status volta a "loading") antes do
+ *     próximo fetch. Não carregamos `prev.data` entre workspaces porque
+ *     isso vazaria métricas do workspace A enquanto o B carrega.
+ *   - O carry de `prev.data` no estado "loading" SÓ acontece quando o
+ *     refresh é dentro do mesmo workspace (poll/refresh manual).
  */
 export function useMetrics(
   options: UseMetricsOptions = {},
@@ -48,16 +56,28 @@ export function useMetrics(
   });
   const [isFetching, setIsFetching] = React.useState(false);
   const lastTriggerRef = React.useRef(0);
+  // Rastreia o workspace do último fetch executado. Quando `workspaceId`
+  // muda, descartamos `prev.data` ao entrar em "loading".
+  const lastWorkspaceRef = React.useRef<string | null>(null);
 
   const load = React.useCallback(async () => {
     lastTriggerRef.current += 1;
     const ticket = lastTriggerRef.current;
+    const previousWorkspace = lastWorkspaceRef.current;
+    const workspaceChanged =
+      previousWorkspace !== null && previousWorkspace !== workspaceId;
+    lastWorkspaceRef.current = workspaceId;
     setIsFetching(true);
-    setState((prev) =>
-      prev.status === "success"
+    setState((prev) => {
+      // Workspace mudou: NÃO carrega `prev.data` (seria vazamento entre
+      // tenants). Reset imediato para `null` antes do próximo fetch.
+      if (workspaceChanged) {
+        return { status: "loading", data: null, error: null };
+      }
+      return prev.status === "success"
         ? { status: "loading", data: prev.data, error: null }
-        : { status: "loading", data: null, error: null },
-    );
+        : { status: "loading", data: null, error: null };
+    });
     try {
       const data = await client.get<MetricsSummary>("/v1/metrics/summary", {
         window,
@@ -70,13 +90,15 @@ export function useMetrics(
         err instanceof Error
           ? err
           : new Error(typeof err === "string" ? err : "unknown error");
-      setState((prev) => ({ status: "error", data: prev.data, error }));
+      // Erro durante workspace change: também não preserva data antiga.
+      setState((prev) => ({
+        status: "error",
+        data: workspaceChanged ? null : prev.data,
+        error,
+      }));
     } finally {
       if (ticket === lastTriggerRef.current) setIsFetching(false);
     }
-    // workspaceId é referenciada apenas para acionar re-fetch em troca de
-    // workspace; o valor real entra no header via client.headers().
-    void workspaceId;
   }, [client, window, workspaceId]);
 
   React.useEffect(() => {
