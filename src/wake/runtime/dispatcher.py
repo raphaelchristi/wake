@@ -13,10 +13,16 @@ It is responsible for:
 5. Consuming the adapter's async-iterator of placeholder ``Event``
    objects and appending each into the event log (overwriting the
    placeholder ``id``/``seq`` with the runtime-assigned values).
+
+Phase 7 ops-throughput addition: an in-process queue-depth gauge
+(``in_flight`` counter + ``max_in_flight`` ceiling) so the API layer
+can compute worker saturation and emit ``X-Wake-Worker-Saturation``
+or 503 when the system is overloaded.
 """
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING, cast
 
 import structlog
@@ -41,6 +47,22 @@ DEFAULT_ADAPTER_NAME = "claude-sdk"
 """Adapter name used when an agent doesn't specify one in metadata."""
 
 
+#: Env var for the maximum in-flight steps used to compute saturation.
+WAKE_DISPATCHER_MAX_INFLIGHT_ENV = "WAKE_DISPATCHER_MAX_INFLIGHT"
+DEFAULT_MAX_INFLIGHT = 64
+
+
+def _resolve_max_inflight() -> int:
+    raw = os.environ.get(WAKE_DISPATCHER_MAX_INFLIGHT_ENV, "").strip()
+    if not raw:
+        return DEFAULT_MAX_INFLIGHT
+    try:
+        n = int(raw)
+    except ValueError:
+        return DEFAULT_MAX_INFLIGHT
+    return max(1, n)
+
+
 class SessionDispatcher:
     """Drives one step of a session through the configured adapter."""
 
@@ -51,11 +73,38 @@ class SessionDispatcher:
         tool_registry: WakeToolsRegistry,
         *,
         default_adapter: str = DEFAULT_ADAPTER_NAME,
+        max_in_flight: int | None = None,
     ) -> None:
         self._adapters = adapter_registry
         self._event_log = event_log
         self._tools = tool_registry
         self._default_adapter = default_adapter
+        # Backpressure bookkeeping (Phase 7 — Tier 1 gap #4).
+        # ``in_flight`` is incremented before ``run_step`` enters the
+        # adapter and decremented in the matching ``finally`` block.
+        # ``max_in_flight`` is the saturation ceiling: depth/max in
+        # [0.0, 1.0] is exposed to the API layer as the
+        # ``X-Wake-Worker-Saturation`` header; >= 1.0 triggers 503.
+        self.in_flight: int = 0
+        self.max_in_flight: int = max_in_flight if max_in_flight is not None else _resolve_max_inflight()
+
+    # ------------------------------------------------------------------ queue depth
+
+    @property
+    def queue_depth(self) -> int:
+        """Current number of in-flight steps (snapshot — no lock)."""
+        return self.in_flight
+
+    def saturation(self) -> float:
+        """Return queue depth / ceiling clamped to ``[0.0, ...]``.
+
+        Returns 0.0 when nothing is in flight; >= 1.0 when the
+        configured ceiling is met or exceeded. The API layer uses
+        this to populate the saturation header and decide 503.
+        """
+        if self.max_in_flight <= 0:
+            return 0.0
+        return self.in_flight / self.max_in_flight
 
     def resolve_adapter_name(self, agent: AgentConfig) -> str:
         """Pick the adapter name for an agent.
@@ -77,6 +126,10 @@ class SessionDispatcher:
         The dispatcher uses the wrapped ``EventLog`` to assign each event
         a session-scoped ``seq``/``id`` — the placeholders the adapter
         emits are discarded.
+
+        The in-flight counter is incremented before the adapter runs
+        and decremented in the matching ``finally`` so the saturation
+        gauge stays accurate even when an adapter raises.
         """
         adapter_name = self.resolve_adapter_name(agent)
         adapter = self._adapters.get(adapter_name)
@@ -118,17 +171,26 @@ class SessionDispatcher:
             lifecycle=lifecycle,
         )
 
-        # The Protocol declares ``step`` as ``async def ... -> AsyncIterator``,
-        # which mypy reads as a coroutine returning an iterator. Real adapters
-        # are async generators that produce an iterator directly — that's the
-        # SPEC's intent. Cast keeps mypy --strict happy without changing the
-        # scaffolding Protocol.
-        stream = cast("AsyncIterator[Event]", adapter.step(ctx, events, tools))
-        async for emitted in stream:
-            await self._event_log.append(
-                session.id,
-                emitted.type,
-                emitted.payload,
-                parent_id=emitted.parent_id,
-                metadata=emitted.metadata,
-            )
+        # Phase 7: queue-depth bookkeeping — increment before the
+        # adapter does any work, decrement in finally. The bound is
+        # in-process; saturated requests at the API layer return 503
+        # before reaching the dispatcher so this counter rarely peaks
+        # in practice.
+        self.in_flight += 1
+        try:
+            # The Protocol declares ``step`` as ``async def ... -> AsyncIterator``,
+            # which mypy reads as a coroutine returning an iterator. Real adapters
+            # are async generators that produce an iterator directly — that's the
+            # SPEC's intent. Cast keeps mypy --strict happy without changing the
+            # scaffolding Protocol.
+            stream = cast("AsyncIterator[Event]", adapter.step(ctx, events, tools))
+            async for emitted in stream:
+                await self._event_log.append(
+                    session.id,
+                    emitted.type,
+                    emitted.payload,
+                    parent_id=emitted.parent_id,
+                    metadata=emitted.metadata,
+                )
+        finally:
+            self.in_flight = max(0, self.in_flight - 1)
