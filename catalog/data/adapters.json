@@ -1,0 +1,52 @@
+{
+  "adapters": [
+    {
+      "slug": "claude-sdk",
+      "name": "wake-adapter-claude-sdk",
+      "version": "0.1.0",
+      "homepage": "https://github.com/raphaelchristi/wake/tree/main/adapters/claude-sdk",
+      "framework": "Anthropic Claude SDK",
+      "conformance_score": 10,
+      "conformance_max": 10,
+      "last_verified": "2026-05-14",
+      "maintainers": ["wake-ai-maintainers"],
+      "description": "Reference HarnessAdapter for Anthropic Claude SDK. First adapter built; backbone of the ABI design."
+    },
+    {
+      "slug": "langgraph",
+      "name": "wake-adapter-langgraph",
+      "version": "0.1.0",
+      "homepage": "https://github.com/raphaelchristi/wake/tree/main/adapters/langgraph",
+      "framework": "LangChain LangGraph",
+      "conformance_score": 10,
+      "conformance_max": 10,
+      "last_verified": "2026-05-14",
+      "maintainers": ["wake-ai-maintainers"],
+      "description": "HarnessAdapter for LangGraph StateGraph + ToolNode + create_react_agent. Wraps compiled graphs via astream()."
+    },
+    {
+      "slug": "crewai",
+      "name": "wake-adapter-crewai",
+      "version": "0.1.0",
+      "homepage": "https://github.com/raphaelchristi/wake/tree/main/adapters/crewai",
+      "framework": "CrewAI",
+      "conformance_score": 10,
+      "conformance_max": 10,
+      "last_verified": "2026-05-14",
+      "maintainers": ["wake-ai-maintainers"],
+      "description": "HarnessAdapter for CrewAI role-based agents (Crew, Agent, Task) with native callbacks."
+    },
+    {
+      "slug": "pydantic-ai",
+      "name": "wake-adapter-pydantic-ai",
+      "version": "0.1.0",
+      "homepage": "https://github.com/raphaelchristi/wake/tree/main/adapters/pydantic-ai",
+      "framework": "Pydantic AI",
+      "conformance_score": 10,
+      "conformance_max": 10,
+      "last_verified": "2026-05-14",
+      "maintainers": ["wake-ai-maintainers"],
+      "description": "HarnessAdapter for Pydantic AI typed agents (FunctionToolset, streaming, type-safe contracts)."
+    }
+  ]
+}

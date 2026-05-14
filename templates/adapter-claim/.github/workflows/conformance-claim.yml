@@ -1,0 +1,46 @@
+name: Conformance Claim
+
+on:
+  workflow_dispatch:
+    inputs:
+      adapter_module:
+        description: "Python import path to your HarnessAdapter (e.g. mypkg.adapter:MyAdapter)"
+        required: true
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - ".github/workflows/conformance-claim.yml"
+
+jobs:
+  conformance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - name: Install adapter + conformance suite
+        run: |
+          pip install -e .
+          pip install wake-test-conformance wake-ai
+      - name: Run conformance
+        run: |
+          wake-test-conformance run \
+            --adapter ${{ github.event.inputs.adapter_module || 'mypkg.adapter:MyAdapter' }} \
+            --output conformance_results.json
+      - name: Generate badge SVG
+        run: |
+          SCORE=$(jq '.passed' conformance_results.json)
+          MAX=$(jq '.total' conformance_results.json)
+          wake adapter badge generate \
+            --name "${{ github.event.repository.name }}" \
+            --score "$SCORE" \
+            --max "$MAX" \
+            --output conformance_badge.svg
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: conformance-claim
+          path: |
+            conformance_results.json
+            conformance_badge.svg
