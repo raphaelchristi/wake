@@ -17,11 +17,13 @@ It is responsible for:
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING, cast
 
 import structlog
 
 from wake.adapters.context import SessionContext
+from wake.observability.metrics import get_metrics
 from wake.runtime.event_stream import WakeEventStream
 from wake.runtime.tool_registry import WakeToolRegistry
 
@@ -118,17 +120,50 @@ class SessionDispatcher:
             lifecycle=lifecycle,
         )
 
+        # Phase 7 — emit Prom metrics. ``get_metrics()`` returns the
+        # process-wide singleton; first call lazily registers collectors.
+        metrics = get_metrics()
+        workspace_id = getattr(session, "workspace_id", None)
+
+        step_started = time.perf_counter()
+
         # The Protocol declares ``step`` as ``async def ... -> AsyncIterator``,
         # which mypy reads as a coroutine returning an iterator. Real adapters
         # are async generators that produce an iterator directly — that's the
         # SPEC's intent. Cast keeps mypy --strict happy without changing the
         # scaffolding Protocol.
         stream = cast("AsyncIterator[Event]", adapter.step(ctx, events, tools))
-        async for emitted in stream:
-            await self._event_log.append(
-                session.id,
-                emitted.type,
-                emitted.payload,
-                parent_id=emitted.parent_id,
-                metadata=emitted.metadata,
-            )
+        try:
+            async for emitted in stream:
+                persisted = await self._event_log.append(
+                    session.id,
+                    emitted.type,
+                    emitted.payload,
+                    parent_id=emitted.parent_id,
+                    metadata=emitted.metadata,
+                )
+                # Emit per-event metric. The store-returned event has the
+                # canonical type / workspace_id; we fall back to the
+                # emitted view if the store doesn't echo back.
+                ev_type = getattr(persisted, "type", None) or emitted.type
+                ev_ws = (
+                    getattr(persisted, "workspace_id", None)
+                    or workspace_id
+                )
+                metrics.observe_event_appended(
+                    event_type=str(ev_type),
+                    workspace=ev_ws,
+                )
+                # Cost histogram — populated only when the adapter
+                # surfaced an LLM cost on the event metadata. Slice B
+                # owns the *enforcement* layer; we just *observe* here.
+                meta = emitted.metadata or {}
+                cost = meta.get("cost_usd")
+                if isinstance(cost, (int, float)):
+                    metrics.observe_cost(usd=float(cost))
+        except Exception:
+            metrics.observe_error(code="dispatcher_step_failed")
+            raise
+        finally:
+            elapsed = time.perf_counter() - step_started
+            metrics.observe_step_duration(seconds=elapsed)
