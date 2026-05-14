@@ -139,6 +139,79 @@
         "affinity": { "type": "object" }
       },
       "required": ["enabled"]
+    },
+    "retention": {
+      "type": "object",
+      "description": "Retention CronJobs (Phase 7 gap #5): archive + purge for event log TTL.",
+      "additionalProperties": true,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Master switch. Default false (opt-in). Set true to render retention CronJobs."
+        },
+        "eventsTtlDays": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 36500,
+          "description": "Local event log TTL (days)."
+        },
+        "sessionsTtlDays": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 36500,
+          "description": "Session row TTL (reserved — informational today)."
+        },
+        "archive": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "schedule": {
+              "type": "string",
+              "pattern": "^[0-9*,/\\-]+ [0-9*,/\\-]+ [0-9*,/\\-]+ [0-9*,/\\-]+ [0-9*,/\\-]+$"
+            },
+            "beforeDays": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 3650
+            },
+            "s3Bucket": {
+              "type": "string",
+              "description": "S3 URL (s3://bucket[/prefix])."
+            },
+            "awsRegion": { "type": "string" },
+            "awsSecretRef": {
+              "type": "object",
+              "properties": {
+                "name": { "type": "string" }
+              }
+            },
+            "batchSize": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10000
+            },
+            "deleteAfterUpload": { "type": "boolean" }
+          }
+        },
+        "purge": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "schedule": {
+              "type": "string",
+              "pattern": "^[0-9*,/\\-]+ [0-9*,/\\-]+ [0-9*,/\\-]+ [0-9*,/\\-]+ [0-9*,/\\-]+$"
+            }
+          }
+        },
+        "resources": {
+          "type": "object",
+          "properties": {
+            "requests": { "type": "object" },
+            "limits": { "type": "object" }
+          }
+        }
+      },
+      "required": ["enabled"]
     }
   }
 }

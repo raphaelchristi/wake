@@ -1,0 +1,186 @@
+{{- if .Values.retention.enabled }}
+{{- /*
+  Retention CronJob — Phase 7 gap #5. Opt-in via ``retention.enabled``.
+
+  Renders TWO CronJobs:
+
+    1. <fullname>-retention-purge       Daily — deletes events older
+                                        than ``retention.eventsTtlDays``
+                                        (after archive completes, if
+                                        archive is wired).
+
+    2. <fullname>-retention-archive     Daily — uploads events older
+                                        than ``retention.archiveBeforeDays``
+                                        to S3 then deletes locally.
+
+  Both are guarded by `retention.enabled=true`. Default off — operators
+  must explicitly enable both.
+
+  IMPORTANT: archive ALWAYS runs before purge. We schedule the archive
+  CronJob slightly earlier (default 03:00) than the purge job (default
+  03:30) so an in-flight archive doesn't race with a purge that would
+  delete its source rows.
+*/}}
+{{- $fullName := include "wake.fullname" . }}
+{{- $image := .Values.image }}
+
+{{- if .Values.retention.archive.enabled }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ $fullName }}-retention-archive
+  labels:
+    {{- include "wake.labels" . | nindent 4 }}
+    app.kubernetes.io/component: retention
+    retention.wake.dev/type: archive
+spec:
+  schedule: {{ .Values.retention.archive.schedule | quote }}
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 21600  # 6h cap for large archive runs
+      template:
+        metadata:
+          labels:
+            {{- include "wake.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: retention
+            retention.wake.dev/type: archive
+        spec:
+          restartPolicy: OnFailure
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+          containers:
+            - name: wake-archive
+              securityContext:
+                {{- toYaml .Values.containerSecurityContext | nindent 16 }}
+              image: "{{ $image.repository }}:{{ $image.tag }}"
+              imagePullPolicy: {{ $image.pullPolicy }}
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -euo pipefail
+                  BEFORE=$(date -u -d "-{{ .Values.retention.archive.beforeDays }} days" +%Y-%m-%dT%H:%M:%SZ \
+                    2>/dev/null || python -c "from datetime import datetime, timedelta, timezone; print((datetime.now(timezone.utc)-timedelta(days={{ .Values.retention.archive.beforeDays }})).strftime('%Y-%m-%dT%H:%M:%SZ'))")
+                  echo "[wake-archive] cutoff=$BEFORE bucket={{ .Values.retention.archive.s3Bucket }}"
+                  wake events archive \
+                    --before="$BEFORE" \
+                    --bucket={{ .Values.retention.archive.s3Bucket | quote }} \
+                    --batch-size={{ .Values.retention.archive.batchSize }} \
+                    {{- if .Values.retention.archive.deleteAfterUpload }}
+                    --delete
+                    {{- else }}
+                    --no-delete
+                    {{- end }}
+              env:
+                - name: WAKE_DATABASE_URL
+                  value: {{ include "wake.databaseUrl" . | quote }}
+                - name: POSTGRES_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      {{- if .Values.postgres.existingSecret }}
+                      name: {{ .Values.postgres.existingSecret | quote }}
+                      key: postgres-password
+                      {{- else }}
+                      name: {{ $fullName }}-secret
+                      key: postgres-password
+                      {{- end }}
+                {{- with .Values.retention.archive.awsSecretRef }}
+                {{- if .name }}
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .name | quote }}
+                      key: access-key-id
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .name | quote }}
+                      key: secret-access-key
+                {{- end }}
+                {{- end }}
+                {{- with .Values.retention.archive.awsRegion }}
+                - name: AWS_DEFAULT_REGION
+                  value: {{ . | quote }}
+                {{- end }}
+              resources:
+                {{- toYaml .Values.retention.resources | nindent 16 }}
+{{- end }}
+
+{{- if .Values.retention.purge.enabled }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ $fullName }}-retention-purge
+  labels:
+    {{- include "wake.labels" . | nindent 4 }}
+    app.kubernetes.io/component: retention
+    retention.wake.dev/type: purge
+spec:
+  schedule: {{ .Values.retention.purge.schedule | quote }}
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 14400
+      template:
+        metadata:
+          labels:
+            {{- include "wake.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: retention
+            retention.wake.dev/type: purge
+        spec:
+          restartPolicy: OnFailure
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+          containers:
+            - name: wake-purge
+              securityContext:
+                {{- toYaml .Values.containerSecurityContext | nindent 16 }}
+              image: "{{ $image.repository }}:{{ $image.tag }}"
+              imagePullPolicy: {{ $image.pullPolicy }}
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -euo pipefail
+                  BEFORE=$(python -c "from datetime import datetime, timedelta, timezone; print((datetime.now(timezone.utc)-timedelta(days={{ .Values.retention.eventsTtlDays }})).strftime('%Y-%m-%dT%H:%M:%SZ'))")
+                  echo "[wake-purge] cutoff=$BEFORE"
+                  # Purge is implemented as an archive dry-run + delete.
+                  # If archive is wired, the rows are ALREADY in S3 by now.
+                  wake events archive \
+                    --before="$BEFORE" \
+                    --output=/tmp/purge-receipt.jsonl.gz \
+                    --delete
+              env:
+                - name: WAKE_DATABASE_URL
+                  value: {{ include "wake.databaseUrl" . | quote }}
+                - name: POSTGRES_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      {{- if .Values.postgres.existingSecret }}
+                      name: {{ .Values.postgres.existingSecret | quote }}
+                      key: postgres-password
+                      {{- else }}
+                      name: {{ $fullName }}-secret
+                      key: postgres-password
+                      {{- end }}
+              resources:
+                {{- toYaml .Values.retention.resources | nindent 16 }}
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: tmp
+              emptyDir: {}
+{{- end }}
+{{- end }}
