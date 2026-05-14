@@ -297,3 +297,100 @@ async def test_environment_service_empty_config_default(store: SQLiteStore) -> N
     svc = EnvironmentService(store.environments)
     env = await svc.create("e")
     assert env.config == {}
+
+
+# ----------------------------------------------------------------- UserStore
+
+
+async def test_user_create_and_get(store: SQLiteStore) -> None:
+    from wake.rbac import Role
+
+    u = await store.users.create("alice", display_name="Alice", workspace_id="default")
+    assert u.id == "alice"
+    assert u.roles == ()
+    fetched = await store.users.get("alice", workspace_id="default")
+    assert fetched is not None
+    assert fetched.display_name == "Alice"
+    # Wrong workspace returns None.
+    assert (await store.users.get("alice", workspace_id="other")) is None
+    # Idempotent role assignment + roles_for.
+    from wake.rbac import Role as R
+
+    await store.users.assign_role("alice", R.ADMIN, workspace_id="default")
+    await store.users.assign_role("alice", R.ADMIN, workspace_id="default")
+    await store.users.assign_role("alice", R.OPERATOR, workspace_id="default")
+    roles = await store.users.roles_for("alice", workspace_id="default")
+    assert roles == [Role.ADMIN, Role.OPERATOR]
+
+
+async def test_user_create_rejects_reserved_id(store: SQLiteStore) -> None:
+    with pytest.raises(StoreError):
+        await store.users.create("system", workspace_id="default")
+
+
+async def test_user_create_rejects_duplicate(store: SQLiteStore) -> None:
+    await store.users.create("bob", workspace_id="default")
+    with pytest.raises(StoreError):
+        await store.users.create("bob", workspace_id="default")
+
+
+async def test_user_list_and_workspace_isolation(store: SQLiteStore) -> None:
+    from wake.rbac import Role
+
+    await store.users.create("alice", workspace_id="ws_a")
+    await store.users.create("bob", workspace_id="ws_a")
+    await store.users.create("alice", workspace_id="ws_b")  # same id, different ws
+
+    await store.users.assign_role("alice", Role.ADMIN, workspace_id="ws_a")
+    await store.users.assign_role("alice", Role.VIEWER, workspace_id="ws_b")
+
+    listed_a = await store.users.list(workspace_id="ws_a")
+    assert sorted(u.id for u in listed_a) == ["alice", "bob"]
+    listed_b = await store.users.list(workspace_id="ws_b")
+    assert [u.id for u in listed_b] == ["alice"]
+
+    a_in_ws_a = await store.users.get("alice", workspace_id="ws_a")
+    a_in_ws_b = await store.users.get("alice", workspace_id="ws_b")
+    assert a_in_ws_a is not None and a_in_ws_a.roles == (Role.ADMIN,)
+    assert a_in_ws_b is not None and a_in_ws_b.roles == (Role.VIEWER,)
+
+
+async def test_user_update_display_name(store: SQLiteStore) -> None:
+    await store.users.create("alice", workspace_id="default")
+    updated = await store.users.update(
+        "alice", workspace_id="default", display_name="Alice Renamed"
+    )
+    assert updated.display_name == "Alice Renamed"
+
+
+async def test_user_delete_cascades_roles(store: SQLiteStore) -> None:
+    from wake.rbac import Role
+
+    await store.users.create("alice", workspace_id="default")
+    await store.users.assign_role("alice", Role.ADMIN, workspace_id="default")
+    await store.users.delete("alice", workspace_id="default")
+    assert (await store.users.get("alice", workspace_id="default")) is None
+    assert (
+        await store.users.roles_for("alice", workspace_id="default")
+    ) == []
+
+
+async def test_user_revoke_role_idempotent(store: SQLiteStore) -> None:
+    from wake.rbac import Role
+
+    await store.users.create("alice", workspace_id="default")
+    await store.users.revoke_role("alice", Role.ADMIN, workspace_id="default")  # noop
+    await store.users.assign_role("alice", Role.ADMIN, workspace_id="default")
+    await store.users.revoke_role("alice", Role.ADMIN, workspace_id="default")
+    assert (
+        await store.users.roles_for("alice", workspace_id="default")
+    ) == []
+
+
+async def test_user_assign_role_to_unknown_raises(store: SQLiteStore) -> None:
+    from wake.rbac import Role
+
+    with pytest.raises(StoreError):
+        await store.users.assign_role(
+            "ghost", Role.ADMIN, workspace_id="default"
+        )
