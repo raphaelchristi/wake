@@ -9,6 +9,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { getApiKey, setApiKey } from "@/lib/auth";
+import { getTenantScope, setTenantScope } from "@/lib/tenant";
+
+const TENANT_RE = /^[a-z0-9][a-z0-9_-]{0,62}$/;
 
 export default function LoginPage() {
   return (
@@ -31,7 +34,17 @@ function LoginForm() {
   const params = useSearchParams();
   const next = params?.get("next") ?? "/sessions";
   const [value, setValue] = useState("");
+  const [organizationId, setOrganizationId] = useState("default");
+  const [workspaceId, setWorkspaceId] = useState("default");
   const [error, setError] = useState<string | null>(null);
+
+  // Hydrate inputs com o que já estava salvo (caso o usuário esteja
+  // re-autenticando depois de logout sem clearTenantScope).
+  useEffect(() => {
+    const scope = getTenantScope();
+    setOrganizationId(scope.organizationId);
+    setWorkspaceId(scope.workspaceId);
+  }, []);
 
   // If the operator is already authed, bounce them to `next` immediately.
   useEffect(() => {
@@ -43,11 +56,26 @@ function LoginForm() {
   function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const trimmed = value.trim();
+    const org = organizationId.trim() || "default";
+    const ws = workspaceId.trim() || "default";
     if (!trimmed) {
       setError("API key is required.");
       return;
     }
+    if (!TENANT_RE.test(org)) {
+      setError(
+        "Organization id deve casar /^[a-z0-9][a-z0-9_-]{0,62}$/ (minúsculas, hífen ou _).",
+      );
+      return;
+    }
+    if (!TENANT_RE.test(ws)) {
+      setError(
+        "Workspace id deve casar /^[a-z0-9][a-z0-9_-]{0,62}$/ (minúsculas, hífen ou _).",
+      );
+      return;
+    }
     setApiKey(trimmed);
+    setTenantScope({ organizationId: org, workspaceId: ws });
     router.replace(next);
   }
 
@@ -82,12 +110,42 @@ function LoginForm() {
                 aria-describedby={error ? "api-key-error" : undefined}
                 autoFocus
               />
-              {error && (
-                <p id="api-key-error" className="text-sm text-destructive">
-                  {error}
-                </p>
-              )}
             </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="organization-id">Organization</Label>
+                <Input
+                  id="organization-id"
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder="default"
+                  value={organizationId}
+                  onChange={(event) => {
+                    setOrganizationId(event.target.value);
+                    setError(null);
+                  }}
+                />
+              </div>
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="workspace-id">Workspace</Label>
+                <Input
+                  id="workspace-id"
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder="default"
+                  value={workspaceId}
+                  onChange={(event) => {
+                    setWorkspaceId(event.target.value);
+                    setError(null);
+                  }}
+                />
+              </div>
+            </div>
+            {error && (
+              <p id="api-key-error" className="text-sm text-destructive">
+                {error}
+              </p>
+            )}
             <Button type="submit">Sign in</Button>
           </form>
         </CardContent>
