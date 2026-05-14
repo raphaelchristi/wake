@@ -211,6 +211,58 @@ class SessionService:
             workspace_id=workspace_id,
         )
 
+    async def interrupt(
+        self,
+        session_id: str,
+        *,
+        reason: str,
+        workspace_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> Session:
+        """Emit an ``interrupt`` event and terminate the session.
+
+        Used by the cost-budget enforcer (Phase 7 — gap #7) and by any
+        future kill-switch (rate-limit ban, manual API-call). The
+        ``reason`` is mandatory and propagates to:
+
+        * the ``interrupt`` event ``payload["reason"]`` — for replay
+          and audit, this is the durable record;
+        * the trailing ``status`` event emitted by ``terminate`` —
+          which surfaces in the dashboard's session timeline.
+
+        Idempotent: if the session is already terminated we still
+        ensure an ``interrupt`` event is present (but never duplicated
+        within the same call). Callers that don't want the no-op
+        guarantee should call :meth:`terminate` directly.
+        """
+        current = await self._store.get(session_id, workspace_id=workspace_id)
+        if current is None:
+            raise InvalidTransitionError(f"session {session_id!r} not found")
+        # Always durable-record the interrupt — even for an already-
+        # terminated session, an audit-only emit is still valid.
+        payload: dict[str, Any] = {"reason": reason}
+        if metadata:
+            payload["metadata"] = metadata
+        await self._events.append(
+            session_id,
+            "interrupt",
+            payload,
+            organization_id=current.organization_id,
+            workspace_id=current.workspace_id,
+        )
+        log.info(
+            "session.interrupted",
+            session_id=session_id,
+            reason=reason,
+            status=current.status,
+        )
+        # Tip the session to terminated unless it already is — idempotent
+        # by design so a second cost-budget check on the same session is
+        # a no-op transition (status event suppressed).
+        return await self.terminate(
+            session_id, reason=reason, workspace_id=workspace_id
+        )
+
     # ---- container metadata ----
 
     async def set_container(

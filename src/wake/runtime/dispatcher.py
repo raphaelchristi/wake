@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from wake.adapters.base import LifecycleEvent
     from wake.adapters.registry import AdapterRegistry
     from wake.core.event_log import EventLog
+    from wake.runtime.cost_budget import CostBudgetEnforcer
     from wake.tools.registry import ToolRegistry as WakeToolsRegistry
     from wake.types import AgentConfig, Event, SandboxHandle, Session
 
@@ -74,6 +75,7 @@ class SessionDispatcher:
         *,
         default_adapter: str = DEFAULT_ADAPTER_NAME,
         max_in_flight: int | None = None,
+        cost_budget: CostBudgetEnforcer | None = None,
     ) -> None:
         self._adapters = adapter_registry
         self._event_log = event_log
@@ -87,6 +89,13 @@ class SessionDispatcher:
         # ``X-Wake-Worker-Saturation`` header; >= 1.0 triggers 503.
         self.in_flight: int = 0
         self.max_in_flight: int = max_in_flight if max_in_flight is not None else _resolve_max_inflight()
+        # Optional cost-budget enforcer (Phase 7 — Tier 1 gap #7). When
+        # wired, the dispatcher checks the per-session cost-budget after
+        # every adapter step and interrupts the session if the running
+        # total exceeds ``agent.metadata.max_cost_usd``. Defaults to None
+        # so existing tests + adapters that build a dispatcher manually
+        # don't have to wire it.
+        self._cost_budget = cost_budget
 
     # ------------------------------------------------------------------ queue depth
 
@@ -176,10 +185,8 @@ class SessionDispatcher:
             lifecycle=lifecycle,
         )
 
-        # Phase 7: queue-depth bookkeeping — increment before the
-        # adapter does any work, decrement in finally. Combined with
-        # Phase 6.1 fix: persist adapter-emitted events with the
-        # session's tenant scope.
+        # Phase 7 queue-depth bookkeeping (gap #4) + Phase 6.1 tenant
+        # scope on append + Phase 7 post-step cost budget check (gap #7).
         self.in_flight += 1
         try:
             # The Protocol declares ``step`` as ``async def ... -> AsyncIterator``,
@@ -198,5 +205,27 @@ class SessionDispatcher:
                     organization_id=session.organization_id,
                     workspace_id=session.workspace_id,
                 )
+
+            # Post-step cost budget enforcement — Phase 7 gap #7.
+            # Reactive (not predictive): if running total of cost_usd across
+            # the session log exceeds ``agent.metadata.max_cost_usd`` we
+            # emit an interrupt event + tip the session to terminated. The
+            # next worker poll observes the terminated session and skips it.
+            if self._cost_budget is not None:
+                try:
+                    await self._cost_budget.check(
+                        session.id,
+                        agent,
+                        workspace_id=session.workspace_id,
+                    )
+                except Exception:  # noqa: BLE001
+                    # Never propagate enforcement failures — a broken
+                    # enforcer must not break the dispatch loop.
+                    logger.warning(
+                        "dispatcher_cost_budget_check_failed",
+                        session_id=session.id,
+                        agent_id=agent.id,
+                        exc_info=True,
+                    )
         finally:
             self.in_flight = max(0, self.in_flight - 1)

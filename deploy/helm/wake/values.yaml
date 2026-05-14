@@ -366,6 +366,79 @@ backup:
   affinity: {}
 
 # ---------------------------------------------------------------------------
+# Retention — Phase 7 gap #5 (event TTL + archive + purge CronJobs).
+#
+# Wake's event log grows monotonically. Without retention, a busy
+# workspace will accumulate millions of events and storage will spiral.
+# This section configures two opt-in CronJobs:
+#
+#   * archive  — uploads events older than ``archive.beforeDays`` to S3
+#                as JSONL gzip. If ``archive.deleteAfterUpload`` is
+#                true, the local rows are deleted ONLY after the S3
+#                upload verifies (ETag round-trip).
+#   * purge    — deletes events older than ``eventsTtlDays`` locally.
+#                Use only if you do NOT need an archive (the archive
+#                CronJob already deletes when --delete is set).
+#
+# Defaults: retention.enabled=false (opt-in).
+#   eventsTtlDays:           90    (slightly stale)
+#   sessionsTtlDays:         365   (annual retention)
+#   archive.beforeDays:      30    (cold-storage migration)
+# ---------------------------------------------------------------------------
+
+retention:
+  enabled: false
+
+  # Hard TTLs — informational; the purge CronJob honours them via
+  # ``eventsTtlDays``. ``sessionsTtlDays`` is reserved for a future
+  # session-row purge (events are the storage hot-path today).
+  eventsTtlDays: 90
+  sessionsTtlDays: 365
+
+  # Archive CronJob — uploads events older than ``beforeDays`` to S3
+  # as JSONL gzip. Pairs naturally with the purge job (archive runs
+  # earlier in the day to give purge a clean state).
+  archive:
+    enabled: false
+    # Daily 03:00 UTC by default — runs before purge (03:30).
+    schedule: "0 3 * * *"
+    # Events older than this many days are uploaded.
+    beforeDays: 30
+    # S3 URL — supply scheme + bucket + optional prefix.
+    #   s3://my-bucket
+    #   s3://my-bucket/wake/archive
+    s3Bucket: ""
+    # AWS_DEFAULT_REGION for the boto3 client.
+    awsRegion: "us-east-1"
+    # BYO Secret containing access-key-id + secret-access-key. Leave
+    # empty to use IRSA / instance role (recommended in prod).
+    awsSecretRef:
+      name: ""
+    # Events per S3 PutObject call. Higher = fewer S3 calls but more
+    # memory per batch.
+    batchSize: 1000
+    # Delete local rows AFTER upload succeeds. NEVER set this to true
+    # without a working S3 destination — there's no undo.
+    deleteAfterUpload: true
+
+  # Purge CronJob — local-only delete of stale events. Use if you DO
+  # NOT want an archive. Default: disabled (archive subsumes it).
+  purge:
+    enabled: false
+    # Daily 03:30 UTC by default — runs after archive (03:00).
+    schedule: "30 3 * * *"
+
+  # CronJob resources. Retention jobs are I/O-bound (read events + upload)
+  # so memory budget should match the configured batch size.
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 1
+      memory: 2Gi
+
+# ---------------------------------------------------------------------------
 # Pod security defaults.
 # ---------------------------------------------------------------------------
 

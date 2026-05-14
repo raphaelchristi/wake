@@ -69,9 +69,13 @@ agent_app = typer.Typer(help="Manage agents.", no_args_is_help=True)
 environment_app = typer.Typer(help="Manage environments.", no_args_is_help=True)
 session_app = typer.Typer(help="Manage sessions.", no_args_is_help=True)
 
+# Phase 7 — retention helpers (compact + archive).
+from wake.cli.retention import events_app  # noqa: E402
+
 app.add_typer(agent_app, name="agent")
 app.add_typer(environment_app, name="environment")
 app.add_typer(session_app, name="session")
+app.add_typer(events_app, name="events")
 
 
 # ---------------------------------------------------------------------------

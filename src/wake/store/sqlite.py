@@ -39,6 +39,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     String,
+    delete,
     func,
     select,
     text,
@@ -58,6 +59,7 @@ from wake.store.base import (
     AgentStore,
     EnvironmentStore,
     EventStore,
+    PurgeResult,
     SessionStore,
     StoreError,
     UserStore,
@@ -522,6 +524,109 @@ class SQLiteEventStore(EventStore):
                 stmt = stmt.where(EventRow.workspace_id == workspace_id)
             n = await s.scalar(stmt)
         return int(n or 0)
+
+    # ------------------------------------------------------------------
+    # Retention helpers (Phase 7 — gap #5)
+    # ------------------------------------------------------------------
+
+    async def _delete_events(
+        self,
+        event_ids: list[str],
+        *,
+        workspace_id: str | None = None,
+    ) -> int:
+        if not event_ids:
+            return 0
+        async with self._sessionmaker() as s, s.begin():
+            stmt = delete(EventRow).where(EventRow.id.in_(event_ids))
+            if workspace_id is not None:
+                stmt = stmt.where(EventRow.workspace_id == workspace_id)
+            result = await s.execute(stmt)
+        return int(result.rowcount or 0)
+
+    async def iter_for_archive(
+        self,
+        cutoff: datetime,
+        *,
+        workspace_id: str | None = None,
+        batch_size: int = 1000,
+    ) -> AsyncIterator[list[Event]]:
+        return self._iter_for_archive_impl(
+            cutoff, workspace_id=workspace_id, batch_size=batch_size
+        )
+
+    async def _iter_for_archive_impl(
+        self,
+        cutoff: datetime,
+        *,
+        workspace_id: str | None,
+        batch_size: int,
+    ) -> AsyncIterator[list[Event]]:
+        # SQLite stores naive datetimes; normalise to UTC-naive so the
+        # < comparison matches the values we wrote in ``append``.
+        cutoff_naive = cutoff.astimezone(UTC).replace(tzinfo=None) if cutoff.tzinfo else cutoff
+        offset = 0
+        while True:
+            async with self._sessionmaker() as s:
+                stmt = (
+                    select(EventRow)
+                    .where(EventRow.created_at < cutoff_naive)
+                    .order_by(EventRow.session_id, EventRow.seq)
+                    .limit(batch_size)
+                    .offset(offset)
+                )
+                if workspace_id is not None:
+                    stmt = stmt.where(EventRow.workspace_id == workspace_id)
+                rows = (await s.execute(stmt)).scalars().all()
+            if not rows:
+                return
+            yield [_row_to_event(r) for r in rows]
+            if len(rows) < batch_size:
+                return
+            offset += len(rows)
+
+    async def purge_before(
+        self,
+        cutoff: datetime,
+        *,
+        workspace_id: str | None = None,
+        dry_run: bool = False,
+        batch_size: int = 1000,
+    ) -> PurgeResult:
+        cutoff_naive = cutoff.astimezone(UTC).replace(tzinfo=None) if cutoff.tzinfo else cutoff
+        # Count first — also used as the dry-run result.
+        async with self._sessionmaker() as s:
+            stmt = select(func.count()).select_from(EventRow).where(
+                EventRow.created_at < cutoff_naive
+            )
+            if workspace_id is not None:
+                stmt = stmt.where(EventRow.workspace_id == workspace_id)
+            total = int(await s.scalar(stmt) or 0)
+        if dry_run or total == 0:
+            return PurgeResult(deleted=total, dry_run=dry_run)
+        # Delete in batches so a 10M-row sweep doesn't take a single
+        # long transaction. SQLite's DELETE doesn't support LIMIT
+        # natively (without the SQLITE_ENABLE_UPDATE_DELETE_LIMIT build
+        # option), so we fetch ids in pages and delete by id.
+        deleted = 0
+        while deleted < total:
+            async with self._sessionmaker() as s, s.begin():
+                id_stmt = (
+                    select(EventRow.id)
+                    .where(EventRow.created_at < cutoff_naive)
+                    .limit(batch_size)
+                )
+                if workspace_id is not None:
+                    id_stmt = id_stmt.where(EventRow.workspace_id == workspace_id)
+                ids = (await s.execute(id_stmt)).scalars().all()
+                if not ids:
+                    break
+                del_stmt = delete(EventRow).where(EventRow.id.in_(list(ids)))
+                if workspace_id is not None:
+                    del_stmt = del_stmt.where(EventRow.workspace_id == workspace_id)
+                result = await s.execute(del_stmt)
+                deleted += int(result.rowcount or 0)
+        return PurgeResult(deleted=deleted, dry_run=False)
 
 
 def _row_to_event(row: EventRow) -> Event:
