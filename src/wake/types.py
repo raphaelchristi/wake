@@ -13,6 +13,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from wake.rbac import Role, User
 from wake.tenancy import DEFAULT_ORGANIZATION_ID, DEFAULT_WORKSPACE_ID
 
 # ============================================================================
@@ -195,6 +196,30 @@ class SandboxHandle(BaseModel):
     created_at: datetime
 
 
+# ============================================================================
+# RBAC (re-exports — canonical definitions live in ``wake.rbac``)
+# ============================================================================
+#
+# We surface ``User`` and ``Role`` from ``wake.types`` so callers can
+# import the entire surface from one module. The real implementation
+# is in :mod:`wake.rbac` so it can be reused without dragging pydantic
+# into low-level code paths.
+
+
+class UserRoleBinding(BaseModel):
+    """Wire-shape for a ``(user_id, workspace_id, role)`` triple.
+
+    Stored in the ``user_roles`` table. Pydantic shape used by the
+    API surface so OpenAPI can describe the role-assignment payloads.
+    """
+
+    user_id: str
+    organization_id: str = DEFAULT_ORGANIZATION_ID
+    workspace_id: str = DEFAULT_WORKSPACE_ID
+    role: Role
+    created_at: datetime
+
+
 __all__ = [
     "EventType",
     "Event",
@@ -213,4 +238,7 @@ __all__ = [
     "ToolDescriptor",
     "ToolResult",
     "SandboxHandle",
+    "Role",
+    "User",
+    "UserRoleBinding",
 ]
