@@ -17,7 +17,7 @@
 | **6** | Multi-tenancy + RBAC + backup | Tier 0 (#1 #2 #3) | Bloqueia qualquer customer real | ✅ done (`v0.6.0-tenancy` + `v0.6.1-fixes`) |
 | **7** | Operational hardening (idempotency, retention, rate limit, cost budget, Prometheus) | Tier 1 (#4-8) | Sem isso, Wake é "dev tool" não "prod substrate" | ✅ done (`v0.7.0-ops-hardening`) |
 | **8** | Client SDKs (Python + TS) + edit-and-replay + eval framework | Tier 2 (#9-12) | É o que faz developers contratarem Wake | ✅ done (`v0.8.0-dx`) |
-| **9** | Adapter catalog público + supply chain + benchmarks | Tier 3 | Constrói confiança ecosystem |
+| **9** | Adapter catalog público + supply chain + benchmarks | Tier 3 (#13-15) | Constrói confiança ecosystem | ✅ done (`v0.9.0-eco`) |
 | **10** | Public Launch (era Phase 6) | — | Agora com história contável |
 | **11+** | Memory / artifacts / scheduled / multi-agent / computer-use | Tier 4 | Diferenciação vs Managed Agents |
 

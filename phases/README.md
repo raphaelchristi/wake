@@ -21,7 +21,7 @@ Plano de execução do Wake. Cada fase tem **gates de saída objetivos** — voc
 | [**Phase 6**](./PHASE-6-multi-tenancy.md) | **Multi-tenancy + RBAC + Backup** ([CONTRACT](./PHASE-6-CONTRACT.md)) | 3-4 semanas | ✅ done (`v0.6.0-tenancy` + `v0.6.1-fixes`) |
 | [**Phase 7**](./PHASE-7-ops-hardening.md) | **Operational Hardening** ([CONTRACT](./PHASE-7-CONTRACT.md)) | 2-3 semanas | ✅ done (`v0.7.0-ops-hardening`) |
 | **Phase 8** | **Developer Experience** ([CONTRACT](./PHASE-8-CONTRACT.md)) — SDKs (Py + TS) + Eval framework + Edit-and-replay + Migration guides | 2-3 semanas | ✅ done (`v0.8.0-dx`) |
-| Phase 9 | Ecosystem & Trust (adapter catalog, supply chain, benchmarks, reference archs) | 2 semanas | ⚪ not_started |
+| **Phase 9** | **Ecosystem & Trust** ([CONTRACT](./PHASE-9-CONTRACT.md)) — adapter catalog, SBOM + grype/trivy + cosign + Nix devshell, AWS+GCP Terraform refs | 2 semanas | ✅ done (`v0.9.0-eco`) |
 | [Phase 10](./PHASE-10-public-launch.md) | Public Launch (era Phase 6) | 1 semana | ⚪ not_started |
 | Phase 11+ | Managed Agents Parity (memory, artifacts, multi-agent, scheduled, computer-use) | TBD | ⚪ not_started |
 
