@@ -1,0 +1,72 @@
+name: SBOM Generation
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag to generate SBOM for"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  sbom:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || github.event.inputs.version }}
+
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+
+      - name: Install SBOM tools
+        run: |
+          pip install cyclonedx-bom>=4.5
+          npm install -g @cyclonedx/cyclonedx-npm
+
+      - name: Generate Python SBOM
+        run: |
+          mkdir -p docs/sbom
+          cyclonedx-py environment -o docs/sbom/wake-python.cdx.json
+
+      - name: Generate Frontend SBOM
+        run: |
+          cd frontend
+          cyclonedx-npm --output-file ../docs/sbom/wake-frontend.cdx.json
+
+      - name: Generate SDK Python SBOM
+        run: |
+          cd sdks/python
+          cyclonedx-py environment -o ../../docs/sbom/wake-sdk-py.cdx.json || true
+
+      - name: Generate SDK TypeScript SBOM
+        run: |
+          cd sdks/typescript
+          cyclonedx-npm --output-file ../../docs/sbom/wake-sdk-ts.cdx.json || true
+
+      - name: Validate SBOMs
+        run: |
+          for f in docs/sbom/*.cdx.json; do
+            echo "Validating $f"
+            cyclonedx validate --input-file "$f" --input-format json --fail-on-errors
+          done
+
+      - name: Upload SBOM artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: wake-sbom-${{ github.event.release.tag_name || github.event.inputs.version }}
+          path: docs/sbom/*.cdx.json
+          retention-days: 90
+
+      - name: Attach to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: docs/sbom/*.cdx.json

@@ -1,0 +1,54 @@
+name: Sign Container Images
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Image tag to sign (e.g. v0.9.0)"
+        required: true
+
+permissions:
+  id-token: write    # required for cosign keyless OIDC
+  contents: read
+  packages: write    # push signed metadata to ghcr
+
+jobs:
+  sign:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        image: [wake-api, wake-worker, wake-frontend, wake-catalog]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Set version
+        id: vars
+        run: |
+          VERSION="${{ github.event.release.tag_name || github.event.inputs.image_tag }}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "image=ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Pull image
+        run: docker pull "${{ steps.vars.outputs.image }}"
+
+      - name: Sign image (keyless OIDC)
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+        run: |
+          cosign sign --yes "${{ steps.vars.outputs.image }}"
+
+      - name: Verify signature
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+        run: |
+          cosign verify "${{ steps.vars.outputs.image }}" \
+            --certificate-identity-regexp "^https://github.com/${{ github.repository }}/" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com

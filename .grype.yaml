@@ -1,0 +1,27 @@
+output: "table"
+file: ""
+distro: ""
+add-cpes-if-none: false
+output-template-file: ""
+
+fail-on-severity: high
+
+ignore:
+  # Example pattern — extend with real false-positives during operation.
+  # Each ignore block requires a reason field.
+  # - vulnerability: "CVE-2024-XXXX"
+  #   reason: "False positive — fixed in upstream commit Y"
+  #   package:
+  #     name: "example"
+
+check-for-app-update: true
+match:
+  java:
+    using-cpes: true
+  python:
+    using-cpes: true
+  javascript:
+    using-cpes: true
+
+registry:
+  insecure-skip-tls-verify: false

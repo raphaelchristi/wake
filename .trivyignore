@@ -1,0 +1,5 @@
+# Trivy ignore list — only add entries with documented justification.
+# Format: <VULN-ID>  # reason: ...
+#
+# Example:
+# CVE-2024-XXXX  # reason: Vulnerable code path is unreachable in Wake (we don't use feature X)
