@@ -2,7 +2,16 @@
  * EventSource utilities. The shell slice provides a thin reconnecting wrapper
  * that the replay/metrics slices can build on top of. SSE is the canonical
  * real-time channel for Wake (see the `GET /v1/sessions/{id}/stream` route).
+ *
+ * Tenancy:
+ *   - O backend Wake exige `X-Wake-Organization-Id` / `X-Wake-Workspace-Id`
+ *     em todas as requests. `EventSource` no browser não permite custom
+ *     headers, então abrimos a connection via proxy Next.js
+ *     (`/api/wake/sessions/{id}/stream?org=&ws=`) que injeta os headers.
+ *   - `sseUrlForSession()` é a maneira canônica de construir essa URL
+ *     com a query string sanitizada.
  */
+import { getTenantScope } from "@/lib/tenant";
 
 export type SSEEvent<T = unknown> = {
   /** Server-set event id, used for resume via Last-Event-ID. */
@@ -24,6 +33,27 @@ export interface SSEOptions {
   onError?: (error: Event) => void;
   /** Called when the underlying EventSource opens. */
   onOpen?: () => void;
+}
+
+/**
+ * Constrói a URL do proxy SSE Next.js para uma sessão. Opcionalmente
+ * aceita override do scope tenant (útil em testes); por padrão lê de
+ * `getTenantScope()`.
+ *
+ * Importante: a query string `org`/`ws` é só transporte client→proxy.
+ * O proxy re-injeta como headers ao falar com o backend, que é onde
+ * a tenancy é realmente enforced.
+ */
+export function sseUrlForSession(
+  sessionId: string,
+  scope?: { organizationId: string; workspaceId: string },
+): string {
+  const tenant = scope ?? getTenantScope();
+  const params = new URLSearchParams({
+    org: tenant.organizationId,
+    ws: tenant.workspaceId,
+  });
+  return `/api/wake/sessions/${encodeURIComponent(sessionId)}/stream?${params.toString()}`;
 }
 
 /**
