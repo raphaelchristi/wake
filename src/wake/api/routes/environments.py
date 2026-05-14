@@ -15,7 +15,8 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
-from wake.api.dependencies import get_environment_store, get_tenant_context
+from wake.api.dependencies import get_environment_store, get_tenant_context, require_role
+from wake.rbac import Role
 from wake.store.base import EnvironmentStore, StoreError
 from wake.tenancy import TenantContext
 from wake.types import EnvironmentConfig
@@ -32,7 +33,12 @@ class EnvironmentList(BaseModel):
     data: list[EnvironmentConfig]
 
 
-@router.post("", response_model=EnvironmentConfig, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=EnvironmentConfig,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_role(Role.ADMIN, Role.OPERATOR))],
+)
 async def create_environment(
     body: EnvironmentCreate,
     store: EnvironmentStore = Depends(get_environment_store),
@@ -66,7 +72,11 @@ async def get_environment(
     return env
 
 
-@router.post("/{env_id}/archive", response_model=EnvironmentConfig)
+@router.post(
+    "/{env_id}/archive",
+    response_model=EnvironmentConfig,
+    dependencies=[Depends(require_role(Role.ADMIN, Role.OPERATOR))],
+)
 async def archive_environment(
     env_id: str,
     store: EnvironmentStore = Depends(get_environment_store),
@@ -78,7 +88,11 @@ async def archive_environment(
         raise HTTPException(status_code=404, detail="environment not found") from e
 
 
-@router.delete("/{env_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{env_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_role(Role.ADMIN, Role.OPERATOR))],
+)
 async def delete_environment(
     env_id: str,
     store: EnvironmentStore = Depends(get_environment_store),

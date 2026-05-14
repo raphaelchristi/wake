@@ -35,6 +35,7 @@ from wake.api.routes import events as events_routes
 from wake.api.routes import metrics as metrics_routes
 from wake.api.routes import sessions as sessions_routes
 from wake.api.routes import state as state_routes
+from wake.api.routes import users as users_routes
 from wake.api.routes import vault as vault_routes
 from wake.api.sse import router as sse_router
 
@@ -49,7 +50,7 @@ if TYPE_CHECKING:
     from wake.core.session import SessionStateMachine
     from wake.runtime.dispatcher import SessionDispatcher
     from wake.sandbox.base import SandboxAdapter
-    from wake.store.base import AgentStore, EnvironmentStore, SessionStore
+    from wake.store.base import AgentStore, EnvironmentStore, SessionStore, UserStore
     from wake.tools.registry import ToolRegistry
 
 logger = structlog.get_logger(__name__)
@@ -60,6 +61,7 @@ def create_app(
     agent_store: AgentStore | None = None,
     environment_store: EnvironmentStore | None = None,
     session_store: SessionStore | None = None,
+    user_store: UserStore | None = None,
     event_log: EventLog | None = None,
     session_machine: SessionStateMachine | None = None,
     tool_registry: ToolRegistry | None = None,
@@ -142,6 +144,7 @@ def create_app(
         agent_store=agent_store,
         environment_store=environment_store,
         session_store=session_store,
+        user_store=user_store,
         event_log=event_log,
         session_machine=session_machine,
         tool_registry=tool_registry,
@@ -186,6 +189,7 @@ def create_app(
     app.include_router(events_routes.router, dependencies=auth_dep)
     app.include_router(state_routes.router, dependencies=auth_dep)
     app.include_router(metrics_routes.router, dependencies=auth_dep)
+    app.include_router(users_routes.router, dependencies=auth_dep)
     app.include_router(vault_routes.router, dependencies=auth_dep)
     app.include_router(sse_router, dependencies=auth_dep)
 

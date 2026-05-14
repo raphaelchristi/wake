@@ -18,7 +18,8 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
-from wake.api.dependencies import get_agent_store, get_tenant_context
+from wake.api.dependencies import get_agent_store, get_tenant_context, require_role
+from wake.rbac import Role
 from wake.store.base import AgentStore, StoreError
 from wake.tenancy import TenantContext
 from wake.types import AgentConfig, McpServerConfig, ModelConfig, ToolConfig
@@ -50,7 +51,12 @@ class AgentList(BaseModel):
     data: list[AgentConfig]
 
 
-@router.post("", response_model=AgentConfig, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=AgentConfig,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_role(Role.ADMIN, Role.OPERATOR))],
+)
 async def create_agent(
     body: AgentCreate,
     store: AgentStore = Depends(get_agent_store),
@@ -90,7 +96,11 @@ async def get_agent(
     return agent
 
 
-@router.patch("/{agent_id}", response_model=AgentConfig)
+@router.patch(
+    "/{agent_id}",
+    response_model=AgentConfig,
+    dependencies=[Depends(require_role(Role.ADMIN, Role.OPERATOR))],
+)
 async def update_agent(
     agent_id: str,
     body: AgentUpdate,
@@ -106,7 +116,11 @@ async def update_agent(
         raise HTTPException(status_code=404, detail="agent not found") from e
 
 
-@router.post("/{agent_id}/archive", response_model=AgentConfig)
+@router.post(
+    "/{agent_id}/archive",
+    response_model=AgentConfig,
+    dependencies=[Depends(require_role(Role.ADMIN, Role.OPERATOR))],
+)
 async def archive_agent(
     agent_id: str,
     store: AgentStore = Depends(get_agent_store),

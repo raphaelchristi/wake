@@ -6,13 +6,19 @@ provides the real store implementations; the runtime slice consumes them
 through these dependencies.
 """
 
+# ``Depends(...)`` defaults are idiomatic FastAPI (B008); store ABCs and
+# stdlib Callable/Awaitable types are needed at runtime so FastAPI can
+# resolve them (TC003).
+# ruff: noqa: B008, TC003
+
 from __future__ import annotations
 
 import os
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from fastapi import Header, HTTPException, Request
+from fastapi import Depends, Header, HTTPException, Request
 
 if TYPE_CHECKING:
     from wake.adapters.registry import AdapterRegistry
@@ -20,9 +26,15 @@ if TYPE_CHECKING:
     from wake.core.session import SessionStateMachine
     from wake.runtime.dispatcher import SessionDispatcher
     from wake.sandbox.base import SandboxAdapter
-    from wake.store.base import AgentStore, EnvironmentStore, SessionStore
+    from wake.store.base import AgentStore, EnvironmentStore, SessionStore, UserStore
     from wake.tools.registry import ToolRegistry
 
+from wake.rbac import (
+    WAKE_USER_ID_HEADER,
+    Role,
+    User,
+    is_rbac_enabled,
+)
 from wake.tenancy import DEFAULT_ORGANIZATION_ID, DEFAULT_WORKSPACE_ID, TenantContext
 
 
@@ -33,6 +45,7 @@ class AppState:
     agent_store: AgentStore | None = None
     environment_store: EnvironmentStore | None = None
     session_store: SessionStore | None = None
+    user_store: UserStore | None = None
     event_log: EventLog | None = None
     session_machine: SessionStateMachine | None = None
     tool_registry: ToolRegistry | None = None
@@ -85,6 +98,13 @@ def get_session_store(request: Request) -> SessionStore:
     s = get_state(request).session_store
     if s is None:
         raise HTTPException(status_code=501, detail="session_store not configured")
+    return s
+
+
+def get_user_store(request: Request) -> UserStore:
+    s = get_state(request).user_store
+    if s is None:
+        raise HTTPException(status_code=501, detail="user_store not configured")
     return s
 
 
@@ -221,3 +241,104 @@ def _constant_time_eq(a: str, b: str) -> bool:
     for x, y in zip(a.encode(), b.encode(), strict=True):
         acc |= x ^ y
     return acc == 0
+
+
+# ---------------------------------------------------------------------------
+# RBAC
+# ---------------------------------------------------------------------------
+
+
+async def get_current_user(
+    request: Request,
+    tenant: TenantContext = Depends(get_tenant_context),
+    x_wake_user_id: str | None = Header(default=None, alias=WAKE_USER_ID_HEADER),
+) -> User:
+    """Resolve the request principal.
+
+    Behaviour:
+
+    * ``WAKE_RBAC_ENABLED=false`` (default) — returns the sentinel
+      :func:`User.system` carrying every role. Back-compat: existing
+      callers that do not send ``X-Wake-User-Id`` keep working.
+    * ``WAKE_RBAC_ENABLED=true`` and ``X-Wake-User-Id`` missing →
+      ``401 user id required``.
+    * ``WAKE_RBAC_ENABLED=true`` and the header carries an unknown
+      user (no row in the workspace) → ``401 unknown user``.
+    * Otherwise returns the persisted :class:`User` with the roles
+      loaded from the workspace-scoped ``UserStore``.
+
+    The dependency is **idempotent** within a request — FastAPI caches
+    the result so handlers + ``require_role(...)`` share the same
+    instance.
+    """
+    if not is_rbac_enabled():
+        return User.system(
+            organization_id=tenant.organization_id,
+            workspace_id=tenant.workspace_id,
+        )
+
+    user_id = (x_wake_user_id or "").strip()
+    if not user_id:
+        raise HTTPException(status_code=401, detail="user id required")
+
+    state = get_state(request)
+    store = state.user_store
+    if store is None:
+        # Operator turned RBAC on but never wired a UserStore. Fail
+        # closed — surfaces as 503 so the dashboard renders "not
+        # configured" instead of letting unauthenticated traffic in.
+        raise HTTPException(status_code=503, detail="user_store not configured")
+
+    user = await store.get(user_id, workspace_id=tenant.workspace_id)
+    if user is None:
+        # Opacity: do not differentiate "no row" from "wrong
+        # workspace". Either way the caller has no identity Wake
+        # recognises here.
+        raise HTTPException(status_code=401, detail="unknown user")
+    return user
+
+
+def require_role(
+    *roles: Role,
+) -> Callable[..., Awaitable[User]]:
+    """Build a FastAPI dependency that gates the route on a role set.
+
+    Usage::
+
+        @router.post("/agents", dependencies=[Depends(require_role(Role.ADMIN, Role.OPERATOR))])
+        async def create_agent(...): ...
+
+    Behaviour:
+
+    * RBAC off — returns the system user unchanged (any role
+      accepted).
+    * RBAC on and the principal's role intersection with ``roles``
+      is empty → ``403 forbidden`` (deliberately not 404 — the
+      caller passed tenancy isolation already; 404 is reserved
+      for cross-workspace access. See PHASE-6-CONTRACT.md).
+
+    The factory returns a fresh dependency callable each call so
+    different routes can register different role sets without
+    sharing closure state.
+    """
+    if not roles:
+        raise ValueError("require_role needs at least one role")
+
+    allowed: tuple[Role, ...] = tuple(roles)
+
+    async def _dep(
+        user: User = Depends(get_current_user),
+    ) -> User:
+        if not is_rbac_enabled():
+            return user  # back-compat — accept everything
+        if user.has_role(*allowed):
+            return user
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "forbidden: requires one of "
+                + ", ".join(r.value for r in allowed)
+            ),
+        )
+
+    return _dep

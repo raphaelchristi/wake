@@ -20,9 +20,11 @@ from wake.api.dependencies import (
     get_session_machine,
     get_state,
     get_tenant_context,
+    require_role,
 )
 from wake.core.event_log import EventLog
 from wake.core.session import SessionStateMachine
+from wake.rbac import Role
 from wake.store.base import AgentStore
 from wake.tenancy import TenantContext
 from wake.types import Event, EventType
@@ -47,6 +49,7 @@ class EventList(BaseModel):
     "/{session_id}/events",
     response_model=Event,
     status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(require_role(Role.ADMIN, Role.OPERATOR))],
 )
 async def append_event(
     session_id: str,

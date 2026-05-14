@@ -24,15 +24,16 @@ for a backend panic.
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 
-from wake.api.dependencies import AppState, get_state, get_vault
+from wake.api.dependencies import AppState, get_state, get_vault, require_role
 from wake.api.oauth_state import OAuthStateError, sign_state, verify_state
+from wake.rbac import Role
 
 logger = structlog.get_logger(__name__)
 
@@ -119,7 +120,7 @@ async def list_credentials(vault: Any = Depends(get_vault)) -> CredentialList:
                 name=getattr(item, "name", ""),
                 provider=str(getattr(item, "provider", "custom")),
                 scopes=list(getattr(item, "scopes", []) or []),
-                created_at=getattr(item, "created_at", datetime.now(timezone.utc)),
+                created_at=getattr(item, "created_at", datetime.now(UTC)),
                 expires_at=getattr(item, "expires_at", None),
                 metadata={
                     k: v
@@ -222,7 +223,11 @@ async def _start_oauth_flow(
     return OAuthStartResponse(provider=provider, auth_url=url, state=returned_state)
 
 
-@router.post("/oauth/start", response_model=OAuthStartResponse)
+@router.post(
+    "/oauth/start",
+    response_model=OAuthStartResponse,
+    dependencies=[Depends(require_role(Role.ADMIN))],
+)
 async def oauth_start(
     body: OAuthStartRequest,
     request: Request,
@@ -344,7 +349,7 @@ async def oauth_callback(
                 # Defensive: degrade to add + best-effort revoke.
                 name = (
                     f"{provider}_token_"
-                    f"{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
+                    f"{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}"
                 )
                 meta = await vault.add(
                     name=name,
@@ -374,7 +379,7 @@ async def oauth_callback(
             detail=f"rotated_from={vault_id_to_rotate}",
         )
     else:
-        name = f"{provider}_token_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
+        name = f"{provider}_token_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}"
         try:
             meta = await vault.add(
                 name=name,
@@ -399,7 +404,7 @@ async def oauth_callback(
         name=getattr(meta, "name", ""),
         provider=str(getattr(meta, "provider", provider)),
         scopes=list(getattr(meta, "scopes", []) or []),
-        created_at=getattr(meta, "created_at", datetime.now(timezone.utc)),
+        created_at=getattr(meta, "created_at", datetime.now(UTC)),
         expires_at=getattr(meta, "expires_at", None),
         metadata={
             k: v
@@ -418,6 +423,7 @@ async def oauth_callback(
     "/credentials/{vault_id}/rotate",
     response_model=OAuthStartResponse,
     status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(require_role(Role.ADMIN))],
 )
 async def rotate_credential(
     vault_id: str,
@@ -468,6 +474,7 @@ async def rotate_credential(
 @router.delete(
     "/credentials/{vault_id}",
     status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_role(Role.ADMIN))],
 )
 async def revoke_credential(
     vault_id: str,
@@ -561,7 +568,7 @@ def _audit(
 ) -> None:
     state.vault_audit.append(
         {
-            "timestamp": datetime.now(timezone.utc),
+            "timestamp": datetime.now(UTC),
             "decision": decision,
             "provider": provider,
             "host": host,
