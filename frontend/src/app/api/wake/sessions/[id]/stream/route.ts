@@ -16,6 +16,15 @@
  *     backend Wake como header. 400 para input inválido.
  *   - Limita o `id` da sessão à mesma regex para que `URL` join não
  *     mude o path base.
+ *   - **NUNCA** propaga `X-Wake-API-Key` ou `X-Wake-User-Id` enviados pelo
+ *     cliente: ambos têm semântica de autenticação/RBAC e só podem ser
+ *     setados a partir de credenciais server-side. Se o frontend permitir
+ *     que o navegador forneça esses headers, um atacante pode personificar
+ *     outro user id (RBAC principal) ou re-derivar a key de servidor.
+ *     A fronteira de auth fica server-only (`WAKE_API_KEY` no env do Next).
+ *     Identidade RBAC futura será mapeada a partir de uma sessão autenticada
+ *     do frontend (não-implementado ainda); até lá omitimos o user header e
+ *     deixamos o backend cair na regra de fail-closed quando RBAC=ON.
  *
  * Streaming:
  *   - Reusa o `ReadableStream` da resposta upstream — runtime Node.js
@@ -102,18 +111,21 @@ export async function GET(req: NextRequest, ctx: RouteContext): Promise<Response
   const lastEventId = req.headers.get("last-event-id");
   if (lastEventId) upstreamHeaders["Last-Event-ID"] = lastEventId;
 
-  // API key server-side (env) tem prioridade; cliente pode reforçar via
-  // header se quiser (raro — em geral key fica em localStorage e nunca
-  // sobe pelo proxy).
+  // API key SOMENTE server-side — qualquer `x-wake-api-key` enviado pelo
+  // cliente é descartado. Se o frontend pudesse passar a key adiante, um
+  // atacante atrás de um browser hostil substituiria a credencial server,
+  // anulando o boundary "API key nunca chega no client". Origem única:
+  // `process.env.WAKE_API_KEY`.
   const serverKey = process.env.WAKE_API_KEY;
   if (serverKey) upstreamHeaders["X-Wake-API-Key"] = serverKey;
-  const incomingKey = req.headers.get("x-wake-api-key");
-  if (incomingKey) upstreamHeaders["X-Wake-API-Key"] = incomingKey;
 
-  // Opcional: forward de `X-Wake-User-Id` para quando RBAC estiver ON
-  // (slice A roda em paralelo; integração sem rebreak).
-  const userId = req.headers.get("x-wake-user-id");
-  if (userId) upstreamHeaders["X-Wake-User-Id"] = userId;
+  // `X-Wake-User-Id` NUNCA é forward a partir do request do cliente: quando
+  // RBAC=ON o backend trata este header como o principal de autorização, e
+  // permitir que o browser escolha o user id seria um header-spoof direto
+  // (qualquer client poderia se passar por outro user e ler o SSE de outra
+  // sessão). Até existir um mapeamento server-side de sessão autenticada do
+  // frontend → Wake user id, omitimos o header de propósito; com RBAC=ON o
+  // backend cai em fail-closed, com RBAC=OFF é no-op.
 
   const started = Date.now();
   // Log estruturado mínimo. Org/ws e session id são identificadores não

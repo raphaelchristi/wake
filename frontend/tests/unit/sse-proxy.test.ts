@@ -181,4 +181,82 @@ describe("SSE proxy route", () => {
     });
     expect(res.status).toBe(502);
   });
+
+  // Regressão: Codex review HIGH #2 — frontend não pode permitir que o
+  // cliente injete `X-Wake-API-Key` ou `X-Wake-User-Id` via headers do
+  // proxy. Esses cabeçalhos são auth/RBAC e devem vir SOMENTE do server.
+  it("ignores client-supplied X-Wake-API-Key (no header forwarded)", async () => {
+    // Garante que nenhuma key server-side está setada — assim a ausência
+    // do header upstream prova que o spoof do cliente não passou.
+    delete process.env.WAKE_API_KEY;
+    const fetchSpy = vi.fn<typeof fetch>(async () =>
+      new Response("", {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      }),
+    );
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+    const { request } = makeRequest(
+      "http://app.test/api/wake/sessions/sess_abc/stream?org=default&ws=default",
+      { "x-wake-api-key": "attacker-supplied-key" },
+    );
+    await GET(request as never, {
+      params: Promise.resolve({ id: "sess_abc" }),
+    });
+    const call = fetchSpy.mock.calls[0];
+    if (!call) throw new Error("fetch was not called");
+    const headers = (call[1]?.headers ?? {}) as Record<string, string>;
+    expect(headers["X-Wake-API-Key"]).toBeUndefined();
+    // Defesa em profundidade: caso valor exista, jamais é o do attacker.
+    expect(Object.values(headers)).not.toContain("attacker-supplied-key");
+  });
+
+  it("server-side WAKE_API_KEY overrides client-supplied header (no override path)", async () => {
+    process.env.WAKE_API_KEY = "real-server-key";
+    const fetchSpy = vi.fn<typeof fetch>(async () =>
+      new Response("", {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      }),
+    );
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+    const { request } = makeRequest(
+      "http://app.test/api/wake/sessions/sess_abc/stream?org=default&ws=default",
+      { "x-wake-api-key": "attacker-supplied-key" },
+    );
+    await GET(request as never, {
+      params: Promise.resolve({ id: "sess_abc" }),
+    });
+    const call = fetchSpy.mock.calls[0];
+    if (!call) throw new Error("fetch was not called");
+    const headers = (call[1]?.headers ?? {}) as Record<string, string>;
+    // Server-side é a ÚNICA origem aceita.
+    expect(headers["X-Wake-API-Key"]).toBe("real-server-key");
+    expect(Object.values(headers)).not.toContain("attacker-supplied-key");
+  });
+
+  it("ignores client-supplied X-Wake-User-Id (no RBAC principal spoofing)", async () => {
+    const fetchSpy = vi.fn<typeof fetch>(async () =>
+      new Response("", {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      }),
+    );
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+    const { request } = makeRequest(
+      "http://app.test/api/wake/sessions/sess_abc/stream?org=default&ws=default",
+      { "x-wake-user-id": "admin-alice" },
+    );
+    await GET(request as never, {
+      params: Promise.resolve({ id: "sess_abc" }),
+    });
+    const call = fetchSpy.mock.calls[0];
+    if (!call) throw new Error("fetch was not called");
+    const headers = (call[1]?.headers ?? {}) as Record<string, string>;
+    expect(headers["X-Wake-User-Id"]).toBeUndefined();
+    expect(Object.values(headers)).not.toContain("admin-alice");
+  });
 });
