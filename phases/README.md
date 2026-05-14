@@ -18,7 +18,16 @@ Plano de execução do Wake. Cada fase tem **gates de saída objetivos** — voc
 | [Phase 5](./PHASE-5-operator-ui.md) | Operator UI (Wake Dashboard) | 3-5 semanas | ✅ done |
 | [Phase 5.1](./PHASE-5.1-CONTRACT.md) | Adversarial Review Fixes | 2-3h | ✅ done |
 | Phase 5.2 | Adversarial Review Fixes (2nd pass) | <1h | ✅ done |
-| [Phase 6](./PHASE-6-public-launch.md) | Public Launch | 1 semana | ⚪ not_started |
+| **Phase 6** | **Multi-tenancy + RBAC** | 3-4 semanas | ⚪ next |
+| Phase 7 | Operational Hardening (backup, retention, idempotency, Prometheus, rate limit, cost budget) | 2-3 semanas | ⚪ not_started |
+| Phase 8 | Client SDKs (Python + TS) + Edit-and-replay + Eval framework | 2-3 semanas | ⚪ not_started |
+| Phase 9 | Ecosystem & Trust (adapter catalog, supply chain, benchmarks, reference archs) | 2 semanas | ⚪ not_started |
+| Phase 10 | Public Launch (era Phase 6) | 1 semana | ⚪ not_started |
+| Phase 11+ | Managed Agents Parity (memory, artifacts, multi-agent, scheduled, computer-use) | TBD | ⚪ not_started |
+
+> **Re-priorizado em 2026-05-14** após Codex adversarial reviews + POC ceppem-agent. Detalhes completos dos 23 gaps + por que essa ordem em [`docs/ROADMAP.md`](../docs/ROADMAP.md).
+>
+> O arquivo `PHASE-6-public-launch.md` ainda existe — vai ser renomeado para `PHASE-10-public-launch.md` quando a Phase 10 começar. Phase 6 (multi-tenancy) ainda não tem documento dedicado; contrato será escrito no início da fase.
 
 **Total estimado:** 12-13 semanas (≈3 meses) para Wake v0.1.0 público com 4 adapters funcionando.
 

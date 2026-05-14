@@ -1,292 +1,313 @@
-# ROADMAP
+# Wake Roadmap — Gap Analysis & Path to v1.0
 
-Marcos concretos do projeto. Honesto sobre o que não está no caminho.
-
----
-
-## Day 1 (semana 1-2)
-
-**Objetivo:** projeto existe publicamente com algo rodável.
-
-### Deliverables
-
-**Spec v0.1.0 — papel, não código**
-
-- [ ] `SPEC-HARNESS-ADAPTER.md` revisada e congelada (já rascunhada)
-- [ ] `SPEC-EVENT-SCHEMA.md` revisada e congelada (já rascunhada)
-- [ ] JSON Schemas para validação
-- [ ] `CONTRIBUTING.md` + processo RFC
-
-**Wake runtime v0.1.0 — single binary**
-
-- [ ] `pip install wake-ai` ou `brew install wake`
-- [ ] `wake server --local` sobe num único processo (SQLite event store)
-- [ ] API REST: `/v1/agents`, `/v1/environments`, `/v1/sessions`, `/v1/sessions/:id/events`, `/v1/sessions/:id/stream`
-- [ ] Event log SQLite com schema canônico
-- [ ] Tool router com tools built-in: `bash`, `file_read`, `file_write`
-- [ ] Sandbox backend: Docker padrão (sandbox-runtime fica pra Day-30)
-- [ ] HarnessAdapter loaded via plugin discovery
-- [ ] LLM provider via Anthropic SDK direto (LiteLLM Day-30)
-
-**Adapter de referência v0.1.0**
-
-- [ ] `wake-adapter-claude-sdk` — Claude SDK puro como harness
-- [ ] Test suite de conformância rodando
-
-**CLI v0.1.0**
-
-- [ ] `wake server`
-- [ ] `wake agent create/list/get`
-- [ ] `wake session create/send/stream/events/list`
-- [ ] `wake run "<message>"` — atalho one-shot
-
-**Docs e exemplo mínimo**
-
-- [ ] README.md raiz do repo com pitch + quickstart
-- [ ] Exemplo 01-hello-world rodando
-- [ ] Exemplo 02-coding-refactor rodando
-- [ ] GIF/asciicast no README
-
-**Métrica de sucesso Day-1:** dev clona, roda `wake server --local`, `wake run "hello"` retorna assistant.message em <2 minutos.
+> Registro honesto do que falta no Wake pra virar **substrato production-ready** para customers reais (não só dev experience). Resultado direto das duas Codex adversarial reviews (que produziram Phase 5.1 e 5.2) + análise interna pós-POC de integração com `ceppem-agent` (2026-05-14).
+>
+> **Status atual:** Wake é alpha (v0.5.2). Os componentes core (event log, sandbox, vault, multi-worker, dashboard) shipam, mas há **23 gaps** documentados abaixo, organizados por tier de criticidade.
+>
+> **Public Launch (originalmente Phase 6) foi adiado.** Sem Tier 0 resolvido, o primeiro customer descobre os gaps e sai queimado.
+>
+> O roadmap histórico anterior (Day 1 / 30 / 90 / 365) está em [`ROADMAP-HISTORICAL.md`](./ROADMAP-HISTORICAL.md) — mantido por contexto e porque vários compromissos dele já shipparam.
 
 ---
 
-## Day 30 (mês 1)
+## TL;DR — re-priorizando o roadmap
 
-**Objetivo:** generalidade da spec provada com 3 adapters.
+| Phase | Foco | Tier que resolve | Por quê |
+|---|---|---|---|
+| **6** | Multi-tenancy + RBAC | Tier 0 | Bloqueia qualquer customer real |
+| **7** | Operational hardening (backup, retention, rate limit, idempotency, Prometheus) | Tier 1 | Sem isso, Wake é "dev tool" não "prod substrate" |
+| **8** | Client SDKs (Python + TS) + edit-and-replay + eval framework | Tier 2 | É o que faz developers contratarem Wake |
+| **9** | Adapter catalog público + supply chain + benchmarks | Tier 3 | Constrói confiança ecosystem |
+| **10** | Public Launch (era Phase 6) | — | Agora com história contável |
+| **11+** | Memory / artifacts / scheduled / multi-agent / computer-use | Tier 4 | Diferenciação vs Managed Agents |
 
-### Deliverables
+**O gap mais grave:** multi-tenancy. Tudo se desdobra dela — sem ela, RBAC não faz sentido, quotas não fazem sentido, SaaS shape não roda.
 
-**Spec v0.2.0**
-
-- [ ] Revisão pública com feedback da comunidade
-- [ ] Ajustes nos schemas baseado em uso real
-- [ ] Open questions Q1-Q4 resolvidas
-
-**Wake runtime v0.2.0**
-
-- [ ] Postgres backend para event store (single-node ainda)
-- [ ] LiteLLM integration — multi-provider funciona
-- [ ] sandbox-runtime backend (alternativo a Docker)
-- [ ] Infisical Agent Vault integration
-- [ ] agentgateway integration para egress MCP
-- [ ] Resume após harness death (watchdog + advisory locks)
-
-**Adapters de referência**
-
-- [ ] `wake-adapter-langgraph` — StateGraph rodando
-- [ ] `wake-adapter-crewai` — Crew rodando
-- [ ] `wake-adapter-pydantic-ai` — Pydantic AI Agent rodando
-- [ ] Test suite de conformância passando para os 4 adapters
-
-**CLI features**
-
-- [ ] `wake session replay --from N --fork-as Y`
-- [ ] `wake session diff X Y`
-- [ ] `wake vault add/list/remove`
-- [ ] `wake session export --format jsonl --sign`
-
-**Docs**
-
-- [ ] `docs.wake.dev` no ar
-- [ ] Tutorial completo: "deploy your first Wake agent"
-- [ ] Tutorial: "port your LangGraph agent to Wake"
-- [ ] Blog post: "Why Wake: the harness-portable substrate"
-- [ ] Blog post: "HarnessAdapter spec walkthrough"
-
-**Distribuição**
-
-- [ ] Show HN
-- [ ] Twitter/X thread
-- [ ] Discord/Slack community
-- [ ] Conversa com mantenedores de LangGraph, CrewAI, Pydantic AI
-
-**Métrica de sucesso Day-30:** 4 adapters rodando, 1k+ stars, 3-5 contribuidores externos abrindo issues/PRs na spec.
+**O gap com maior ROI imediato:** client SDK (`wake-py`). Sem ele, mesmo um POC simples vira `httpx.post()` raw. SDK é o que faz Wake "real" pros developers.
 
 ---
 
-## Day 90 (mês 3)
+## Tier 0 — Bloqueia qualquer customer real
 
-**Objetivo:** confiabilidade de produção. Adoção real.
+### 1. Multi-tenancy não existe
 
-### Deliverables
+- Tabelas (`agents`, `sessions`, `events`) têm um único namespace
+- Não há `Organization` / `Workspace` / `tenant_id` first-class
+- Ceppem é multi-tenant por design (`SogivendasTenantMiddleware`). Se Wake fosse usado, todo tenant viraria `metadata.tenant_id` — sem isolation de query, sem RBAC, sem quota
+- **Impacto:** qualquer SaaS-shaped uso é tampão (security by obscurity)
 
-**Spec v0.3.0 → v1.0 RC**
+### 2. Authorization é binária
 
-- [ ] Spec considerada estável após review final
-- [ ] Compat tests para múltiplas versões de cada framework
-- [ ] Backward compat tests entre Wake versions
+- `X-Wake-API-Key` = god mode
+- Não há "user A pode invocar agent X mas não Y"
+- Não há "user A não pode ler sessions de user B"
+- Dashboard expõe tudo pra quem tem a chave
 
-**Wake runtime v0.3.0**
+### 3. Sem backup story
 
-- [ ] Multi-node deploy (vários workers, Postgres compartilhado)
-- [ ] Helm chart + Docker Compose oficiais
-- [ ] OpenTelemetry exporters (Langfuse, Phoenix, Helicone validados)
-- [ ] Cloud deploy guides: AWS, GCP, Fly.io
-- [ ] Rate limiting + quotas básicos
-- [ ] Health checks + metrics endpoint
-
-**Adapters expandidos**
-
-- [ ] `wake-adapter-mcp-only` — agentes que só usam MCP, sem framework
-- [ ] `wake-adapter-claude-code` — Claude Code Agent SDK (privately, se possível)
-- [ ] Community-contributed adapter for AutoGen / MAF
-
-**Sandbox backends adicionais**
-
-- [ ] Firecracker microVM backend (opcional)
-- [ ] E2B SDK backend (opcional)
-
-**UI/Dashboard (pacote separado)**
-
-- [ ] `wake-ui` repositório separado
-- [ ] Web UI para listar sessions, ver event stream, replay, debug
-- [ ] Read-only inicialmente
-
-**Audit + compliance**
-
-- [ ] Event signing com ed25519
-- [ ] Export JSONL assinado verificável
-- [ ] Documentação para SOC2 / HIPAA / GDPR
-
-**Métrica de sucesso Day-90:** 5k+ stars, 10+ deploys reportados em produção, 2-3 adapters mantidos pela comunidade (não-fundadores).
+- Phase 4 lista `pgbackrest`/`wal-g` como "Reusable Components" mas zero está wireado no chart
+- Sem PITR documented. Sem disaster recovery runbook. Sem `wake export`/`wake import`
+- **Não pode rodar prod sem isso**
 
 ---
 
-## Day 180 (semestre 1)
+## Tier 1 — Bloqueia produção em escala
 
-**Objetivo:** consolidação como padrão.
+### 4. Idempotency / dedup
 
-### Deliverables
+- `events.append` aloca seq atomicamente, OK
+- Mas se o worker double-processa (foi exatamente o finding #3 do Codex que fechamos em Phase 5.2), nada impede 2 escritas para o mesmo step lógico
+- Falta `event.metadata.idempotency_key` + UNIQUE index
 
-**Spec v1.0 lock**
+### 5. Retention + compaction
 
-- [ ] HarnessAdapter v1.0 final, breaking changes proibidos
-- [ ] Event schema v1.0 final
-- [ ] Tool ABI v1.0 final
-- [ ] Governance pública (steering committee, RFC process formal)
+- Event log cresce pra sempre. Sessions de 100k eventos viram inviáveis no replay
+- Sem `wake events compact` ou snapshots periódicos
+- Sem TTL → archive-to-S3 pipeline
 
-**Wake runtime v1.0**
+### 6. Rate limiting + backpressure
 
-- [ ] GA com SLA de backwards compat
-- [ ] Performance benchmarks publicados
-- [ ] Security audit externo concluído
+- FastAPI sem rate limit middleware. Cliente mal-configurado faz DDoS
+- Worker sem signal de "dispatcher saturated; stop polling"
+- Sem per-key quota / per-tenant quota
 
-**Ecosystem**
+### 7. Cost budgeting
 
-- [ ] Adapter para Microsoft Agent Framework
-- [ ] Adapter para OpenAI Agents SDK (se a comunidade quiser)
-- [ ] Plugins oficiais: `wake-memory-letta`, `wake-memory-mem0`, `wake-outcomes-llm-judge`
-- [ ] Wake aparece em palestras / conferências como referência
+- LiteLLM callbacks emitem `cost_usd` em metadata (✅)
+- Mas: **zero enforcement**. Session pode rodar até R$10k sem ninguém saber
+- Falta `agent.metadata.max_cost_usd` + kill-switch quando excede
 
-**Métrica de sucesso Day-180:** 10k+ stars, 1-2 empresas conhecidas em produção, mantenedores de pelo menos 2 frameworks (LangGraph, CrewAI, etc.) endossando publicamente.
+### 8. `/metrics` Prometheus
 
----
-
-## Day 365 (ano 1)
-
-**Objetivo:** ser o padrão de facto.
-
-### Deliverables
-
-- [ ] Wake runtime v1.x estável
-- [ ] HarnessAdapter v1.x spec adotada por ≥5 frameworks
-- [ ] Comunidade auto-sustentável (PRs vindo de fora, não só fundadores)
-- [ ] Vendors comerciais oferecendo Wake-hosted (Wake.cloud, etc.)
-- [ ] Conferência própria ou track dedicada em conferência maior
+- Tem `GET /v1/metrics/summary` (JSON pro dashboard)
+- **Não tem** `/metrics` exposition (Prometheus). Real ops people scrape Prometheus, não polls REST JSON
 
 ---
 
-## O que NÃO está no roadmap (e por quê)
+## Tier 2 — Bloqueia "shipping product" em cima do Wake
 
-### Memória persistente como primitiva
+### 9. Client SDK
 
-Letta, Mem0, Zep, Cognee resolvem isso. Wake roda eles via tools. Não vai duplicar.
+- `wake-py` não existe. Quem integra usa raw HTTP ou abre o dashboard
+- TypeScript client tampouco
+- Comparar com Anthropic SDK: `client.sessions.create(...)`. Em Wake é `httpx.post(...)`
 
-### Vector store embutido
+### 10. Edit-and-replay
 
-RAG vector stores são feature de aplicação, não substrato. Pluga via tool.
+- Dashboard tem scrubber pra **visualizar** replay
+- **Não tem** "pegar session X, trocar system prompt, replay com mesmas seeds, diff dos eventos resultantes"
+- Isso é o golden workflow de prompt engineering. LangSmith tem; Phoenix tem; Wake não
 
-### LLM fine-tuning / training
+### 11. Eval framework
 
-Fora de escopo.
+- `wake-test-conformance` testa **adapters**, não **agents**
+- Não há `wake eval run --agent X --dataset golden.jsonl` que rode 100 cenários e mostre p95 cost, accuracy, regressions
+- Phoenix Evals + LangSmith Evals fazem isso. Wake precisa equivalente — ou plugin que delegue
 
-### Visual IDE / agent builder GUI
+### 12. Agent versioning UI
 
-UI separada como pacote opcional. Core não.
-
-### Marketplace de agentes
-
-Marketplace é produto SaaS. Wake é substrato OSS.
-
-### Billing, quotas, multi-tenant comercial
-
-Quem quiser comerciar Wake-hosted constrói por cima.
-
-### Suporte oficial a OpenAI Responses API como primary
-
-Wake é Claude-first. OpenAI/Gemini via adapter degradado é Day-30+. Tornar OpenAI primary seria refazer event schema. Não.
-
-### Multiagent coordinator avançado
-
-Existem outcomes/multiagent em research preview na Anthropic, AG2 já faz multi-framework interop. Wake provê primitivas (parent_id em eventos, child sessions). Coordinator avançado vira pacote separado.
-
-### LLM-as-judge / outcomes
-
-Idem. Vira `wake-outcomes` package, não core.
-
-### Skills com progressive disclosure
-
-Anthropic-specific. Wake pode suportar como caso especial de tool registry, mas não é prioridade.
-
-### Otimização automática de prompt
-
-Fora de escopo.
-
-### Hosted SaaS proprietário do Wake
-
-OSS first. Hosted comercial fica para terceiros.
+- Backend versiona (✅)
+- Dashboard **não mostra** diff entre v3 e v4 de um agent
+- Sem canary ("5% do tráfego pra v4")
 
 ---
 
-## Decisões de roadmap explicitamente adiadas
+## Tier 3 — Bloqueia ecosystem
 
-Estas decisões precisam ser tomadas mas não no Day-1. Listadas para não esquecer:
+### 13. Adapter catalog público
 
-- **Q1 — Linguagem do runtime principal:** Python (default rápido), Go (single binary), ou Rust (perf máxima)? Day-1 começa Python, Day-90 decide se reescrita justificada.
-- **Q2 — Backend de durabilidade:** caseiro Postgres ou plugar Temporal/Restate? Day-1 caseiro. Day-30 decide.
-- **Q3 — Modelo de governança:** Linux Foundation, OSS Capital, ou comunidade direta? Day-90 decide.
-- **Q4 — Licença final:** MIT, Apache 2.0, Elastic 2.0, SSPL? Day-30 decide com input de potenciais usuários enterprise.
+- Conformance suite existe. **Nenhum site/registry público** lista "todos adapters que passam 10/10"
+- Third-party autores não têm UX pra reivindicar conformance
+- Sem isso, ABI é "API do Wake", não "padrão da indústria"
 
----
+### 14. Supply chain
 
-## Critérios de cancelamento / pivot
+- Sem SBOM
+- Sem dependency scanning CI
+- Sem `SECURITY.md` (só CoC + contributing)
+- Images não publicadas em registry, não assinadas (cosign)
+- Reproducible builds: nada
 
-Wake é uma aposta. Vale a pena reconhecer quando errar.
+### 15. Documentação operacional
 
-**Sinais para cancelar/pivotar:**
-
-- Dentro de 6 meses, OpenHands V1 SDK publica HarnessAdapter público equivalente — Wake vira contribuição de volta ou fork
-- MAF / OpenAI / LangChain anunciam padrão concorrente com adoção real — Wake adota o padrão alheio
-- Comunidade não vem (após 6 meses, <500 stars, <3 contribuidores externos) — Wake vira projeto pessoal ou descontinuado
-- Nenhum framework principal adota Wake adapter oficialmente — sinal de que a tese não interessa
-
-**Não-sinais (não cancelar por isso):**
-
-- Outro projeto OSS lançar coisa parecida sem ABI pública — não compete
-- MAF crescer rápido — espaço enterprise diferente
-- Multica crescer mais — espaço CLI orchestration diferente
+- README + specs são bons
+- Falta "deploying Wake at scale on AWS/GCP" com Terraform de exemplo
+- Falta migration guide: "vim de LangGraph standalone, como ponho isso no Wake"
+- Falta benchmark publicado (load test existe, nunca foi rodado real + publicado)
 
 ---
 
-## Resumo
+## Tier 4 — Parity com Anthropic Managed Agents
 
-```
-Day 1:    spec congelada + runtime mínimo + 1 adapter
-Day 30:   4 adapters + Postgres + Vault + sandbox-runtime
-Day 90:   multi-node deploy + UI + 2-3 adapters externos
-Day 180:  spec v1.0 + audit security + endorsements
-Day 365:  padrão de facto + comunidade auto-sustentável
-```
+Coisas que Anthropic shipou e Wake nem encostou.
 
-Wake é projeto de 12 meses para impacto. Wake é projeto de 3 meses para validar. Wake é projeto de 2 semanas para existir publicamente.
+### 16. Memory primitives
+
+- Wake só tem event log
+- Managed Agents tem memória semântica abstraída
+- Ceppem implementa RAG por conta. Mem0/Letta plugariam — Wake não tem hook
+
+### 17. Artifact storage
+
+- Sandbox tem files mas **não há event type canônico** `artifact.created` / API `GET /v1/sessions/{id}/artifacts/{path}`
+- Necessário pra workflows tipo "agent gerou um Excel, download pra mim"
+
+### 18. Multi-agent orchestration nativa
+
+- Ceppem faz Root→Domain→Team→Agent **internamente no graph**
+- Wake tem `SessionDispatcher` flat por session. Não há "agent A delega pra agent B" como primitive (cada session é independente)
+- Managed Agents tem isso first-class
+
+### 19. Scheduled agents
+
+- Sem cron-like trigger. "Roda esse agent toda segunda às 9h" → você builds isso por fora
+
+### 20. Computer use / GUI / voice
+
+- Wake bash/file-edit no sandbox
+- Sem browser automation primitive (Playwright in sandbox)
+- Sem TTS/STT (ceppem-agent tem!)
+- Sem computer-use (screenshot + click)
+
+---
+
+## Tier 5 — Estratégico (não-técnico mas importante)
+
+### 21. Adoção é zero
+
+- Primeiro stress test externo: POC de integração com `ceppem-agent` em 2026-05-14
+- Sem case study publicado. Sem RFC público debatido. Sem GitHub Discussions vivendo
+
+### 22. Standards influence ainda é aposta
+
+- HarnessAdapter ABI é "um padrão proposto" enquanto for só Wake
+- Falta engagement com maintainers de LangGraph/CrewAI/Pydantic AI pra abençoar/criticar a spec
+- LangChain tem influência massiva — Wake precisa amigos lá
+
+### 23. Posicionamento vs Anthropic
+
+- Wake imita arquitetura de Managed Agents abertamente
+- Anthropic pode endorse (push pra ecosystem), ignorar, ou competir
+- Sem clarification, customers grandes hesitam
+
+---
+
+## Plano detalhado por phase (proposed)
+
+### Phase 6 — Multi-tenancy & RBAC
+
+**Resolve Tier 0** · **Goal:** Wake suporta múltiplas organizações isoladas com permissões por usuário e backup operational.
+
+Deliverables:
+- `Organization` / `Workspace` entity + tables
+- `organization_id` / `workspace_id` first-class em todas as tabelas (agents, sessions, events, vault)
+- Per-tenant vault namespaces
+- `User` entity + role-based access control (admin, operator, viewer)
+- Per-user session scoping
+- `wake export` / `wake import` CLI commands
+- `pgbackrest` wired into Helm chart com restore runbook (`docs/DISASTER-RECOVERY.md`)
+- Dashboard: org switcher + user management UI
+- Tests: multi-tenant isolation property tests
+- Migration path for single-tenant deploys → multi-tenant (default org/workspace)
+
+### Phase 7 — Operational Hardening
+
+**Resolve Tier 1** · **Goal:** Wake passa em load test de 1000 concurrent sessions em produção real.
+
+Deliverables:
+- `event.metadata.idempotency_key` + UNIQUE index com retry-safe append
+- `wake events compact` command + snapshot policy
+- TTL → S3 archive pipeline
+- FastAPI rate limit middleware (per-key, per-tenant quotas)
+- Worker backpressure signaling
+- `agent.metadata.max_cost_usd` enforcement + kill-switch
+- `/metrics` Prometheus exposition endpoint
+- Helm chart com `ServiceMonitor` for kube-prometheus-stack
+- Load test runbook executed + results published in `docs/BENCHMARKS.md`
+
+### Phase 8 — Developer Experience
+
+**Resolve Tier 2** · **Goal:** Time de produto adota Wake em 1 dia.
+
+Deliverables:
+- `wake-py` SDK published to PyPI (typed, async, com `client.sessions.stream()`)
+- `wake-ts` SDK published to npm
+- Dashboard: "edit & replay" flow (swap prompt, replay, side-by-side diff)
+- `wake eval` framework: dataset → agent → metrics (cost, accuracy, latency)
+- LangSmith Evals + Phoenix Evals integration adapters
+- Agent versioning diff UI + canary deploy (`weight: 5%`)
+- `docs/MIGRATION-FROM-LANGGRAPH.md`, `docs/MIGRATION-FROM-MANAGED-AGENTS.md`
+
+### Phase 9 — Ecosystem & Trust
+
+**Resolve Tier 3** · **Goal:** Wake parece um produto, não um experimento.
+
+Deliverables:
+- Public adapter catalog (`adapters.wake.dev` ou similar)
+- Conformance badge generator + claim flow
+- SBOM published per release (CycloneDX format)
+- Dependency scanning CI (`grype`, `trivy`)
+- `SECURITY.md` + responsible disclosure process
+- Container images signed (cosign + sigstore)
+- Reproducible builds (Nix flake)
+- Reference architecture: AWS Terraform example
+- Reference architecture: GCP Terraform example
+- Published benchmarks in `docs/BENCHMARKS.md`
+
+### Phase 10 — Public Launch (era Phase 6)
+
+**Goal:** mundo sabe que Wake existe.
+
+Deliverables (originais de PHASE-6-public-launch.md):
+- Documentation site (mkdocs-material)
+- Asciinema demos
+- HN / Reddit / Twitter announcement drafts
+- PyPI publish (wake-ai + adapters)
+- Discord / GitHub Discussions setup
+- Recorded conference talk submission
+
+### Phase 11+ — Managed Agents Parity
+
+**Resolve Tier 4** · **Goal:** Wake é uma alternativa OSS funcional, não só "subset open de Managed Agents".
+
+Possible phases (any order, pick by customer demand):
+
+- **Phase 11A — Memory primitives:** `MemoryAdapter` ABI + reference impls (Mem0, Letta, vector DB)
+- **Phase 11B — Artifact storage:** `artifact.created` canonical event + REST API + browser download
+- **Phase 11C — Multi-agent orchestration:** `agent.delegate(other_agent)` primitive + delegation events
+- **Phase 11D — Scheduled agents:** cron triggers + `Schedule` entity
+- **Phase 11E — Computer use:** Playwright-in-sandbox + screenshot/click primitives
+- **Phase 11F — Voice:** TTS/STT adapter ABI + reference impls
+
+---
+
+## Tier 5 (estratégico) — executar em paralelo com phases técnicas
+
+Esses items não shipam num PR; são posicionamento e engagement:
+
+- **Adoção:** publicar case study do POC com ceppem (com permissão), conseguir 2-3 stress tests externos ANTES da Phase 10
+- **Standards engagement:** abrir issues amigáveis em LangGraph, CrewAI, Pydantic AI propondo o `HarnessAdapter` como padrão de interop; gravar 1 call por equipe pra alinhar
+- **Anthropic relationship:** considerar enviar Wake pra `community-projects` ou similar lista; clarificar se é blessed/neutral/competitor
+
+---
+
+## Como ler isto
+
+1. **Sem Tier 0 = sem customer real.** Phase 6 não é opcional — é o gate pra Wake ser usado por alguém que não seja você mesmo.
+2. **Sem Tier 1 = não roda em produção.** Phase 7 separa "playground" de "infra séria".
+3. **Sem Tier 2 = developers não adotam.** Phase 8 é a feature mais visível pro outside world.
+4. **Sem Tier 3 = ABI não vira padrão.** Phase 9 é construir o caminho pra outros frameworks abençoarem.
+5. **Public Launch antes desses tiers = queimar reputação.** Use Phase 10 como "lançamento responsável".
+6. **Tier 4 é diferenciação, não fundação.** Constrói depois de ter customers.
+
+---
+
+## Histórico de revisões
+
+| Data | Mudança | Trigger |
+|---|---|---|
+| 2026-05-14 | Roadmap inicial criado com 23 gaps tiered | Análise interna pós-POC ceppem-agent + 2 Codex adversarial reviews |
+
+---
+
+*Este documento é um RFC vivo. Discordâncias e propostas: abra issue com tag `rfc:roadmap` no GitHub.*
